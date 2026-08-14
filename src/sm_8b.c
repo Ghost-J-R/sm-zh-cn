@@ -772,16 +772,24 @@ void ComposeFadingPalettes(void) {  // 0x8B8CEA
 }
 
 void CinematicFunction_Intro_Func20(uint16 j) {  // 0x8B8D23
-  uint16 *tt = (uint16 *)RomPtr_8B(j);
-  uint16 v2 = tt[0];
-  int r18 = tt[1];
-  uint16 *dst = ram4000.intro_japanese_text_tiles;
-  do {
-    memcpy(dst + (v2 >> 1), (uint16 *)&g_ram[tt[2] + 0x1a000], 16);
-    memcpy(dst + ((v2 + 768) >> 1), (uint16 *)&g_ram[tt[3] + 0x1a000], 16);
-    v2 += 16;
-    tt += 2;
-  } while (--r18);
+  // CHS 补丁将本函数体替换为跳板 JSL $E38873：原"bank 8B 表驱动拷贝"换成
+  // "按序号索引 bank E6 的 3 字节长指针表 {lo,hi,bank}"，一次铺满 0x600 字节的
+  // intro_japanese_text_tiles 缓冲区。以下为 $E3:8873 的逐指令 C 等价实现。
+  // 调用点语义：序号 1-10 对应 E6E237 表 10 项（各指向 0x600 字节字模块）；
+  // Func18(0x8BB4EB) 未被补丁改动，仍传 addr_word_8BD389(0xD389)，索引越出
+  // 表尾读 E7:5CCF——C 与 CHS ROM 行为保持一致（不特判）。
+  uint16 t = j - 1;                                          // TYA / DEC / STA $CC
+  uint16 x = (uint16)((uint16)(t << 1) + t);                 // ASL(16 位截断) / CLC / ADC $CC / TAX
+  const uint8 *e = (const uint8 *)RomFixedPtr(0xE6E237 + x);  // LDA $E6E237,X + LDA $E6E238,X（长索引可跨 bank）
+  uint32 src = e[0] | ((uint32)e[1] << 8) | ((uint32)e[2] << 16);  // $CE:$CD:$CC 24 位源指针
+  const uint16 *s = (const uint16 *)RomFixedPtr(src);        // LDA [$CC]（长间接读源）
+  uint16 *dst = ram4000.intro_japanese_text_tiles;           // STA $7E4000,X
+  // 四个 0x180 字节块，LDX #$0000/#$0300/#$0180/#$0480 依次执行；源连续推进
+  // （$CC 不重置），四块按序铺满 $7E4000-$7E4600。
+  memcpy(dst + 0x000, s + 0x000, 0x180);
+  memcpy(dst + 0x180, s + 0x0C0, 0x180);
+  memcpy(dst + 0x0C0, s + 0x180, 0x180);
+  memcpy(dst + 0x240, s + 0x240, 0x180);
 }
 
 void TransferJapaneseTextTilesToVram(void) {  // 0x8B8DE6
@@ -3018,8 +3026,7 @@ uint16 sub_8BB51E(uint16 k, uint16 j) {  // 0x8BB51E
   palette_buffer[18] = kPalettes_Intro[18];
   palette_buffer[19] = kPalettes_Intro[19];
   ClearJapaneseTextTiles();
-  CinematicFunction_Intro_Func20(addr_word_8BCF75);
-  CinematicFunction_Intro_Func20(addr_word_8BCFBD);
+  CinematicFunction_Intro_Func20(1);  // CHS: 双调用 LDY #$CF75/#$CFBD → LDY #$0001 + JMP $B54A/NOP×3（删第二次）
   TransferJapaneseTextTilesToVram();
   return j;
 }
@@ -3035,8 +3042,7 @@ uint16 CinematicFunction_Intro_Func21(uint16 k, uint16 j) {  // 0x8BB554
   palette_buffer[18] = kPalettes_Intro[18];
   palette_buffer[19] = kPalettes_Intro[19];
   ClearJapaneseTextTiles();
-  CinematicFunction_Intro_Func20(addr_word_8BCFFD);
-  CinematicFunction_Intro_Func20(addr_word_8BD055);
+  CinematicFunction_Intro_Func20(2);  // CHS: 双调用 LDY #$CFFD/#$D055 → LDY #$0002 + JMP $B580/NOP×3（删第二次）
   TransferJapaneseTextTilesToVram();
   return j;
 }
@@ -3049,8 +3055,7 @@ void CinematicFunction_Intro_Func22(uint16 k) {  // 0x8BB585
     mode7_obj_preinstr_func[v1] = FUNC16(CinematicFunction_nullsub_116);
     DisableCinematicBgTilemapUpdates();
     ClearJapaneseTextTiles();
-    CinematicFunction_Intro_Func20(addr_word_8BD085);
-    CinematicFunction_Intro_Func20(addr_word_8BD0E1);
+    CinematicFunction_Intro_Func20(3);  // CHS: 双调用 LDY #$D085/#$D0E1 → LDY #$0003 + JMP $B5AE/NOP×3（删第二次）
     TransferJapaneseTextTilesToVram();
     cinematic_var16 = 60;
   }
@@ -3068,7 +3073,7 @@ uint16 CinematicFunction_Intro_Func23(uint16 k, uint16 j) {  // 0x8BB5C3
   palette_buffer[18] = kPalettes_Intro[18];
   palette_buffer[19] = kPalettes_Intro[19];
   ClearJapaneseTextTiles();
-  CinematicFunction_Intro_Func20(addr_word_8BD0F9);
+  CinematicFunction_Intro_Func20(4);  // CHS: LDY #$D0F9 → LDY #$0004
   TransferJapaneseTextTilesToVram();
   return j;
 }
@@ -3081,7 +3086,7 @@ void CinematicFunction_Intro_Func24(uint16 k) {  // 0x8BB5EE
     mode7_obj_preinstr_func[v1] = FUNC16(CinematicFunction_nullsub_116);
     DisableCinematicBgTilemapUpdates();
     ClearJapaneseTextTiles();
-    CinematicFunction_Intro_Func20(addr_word_8BD15D);
+    CinematicFunction_Intro_Func20(5);  // CHS: LDY #$D15D → LDY #$0005
     TransferJapaneseTextTilesToVram();
     cinematic_var16 = 60;
   }
@@ -3099,8 +3104,7 @@ uint16 CinematicFunction_Intro_Func26(uint16 k, uint16 j) {  // 0x8BB626
   palette_buffer[18] = kPalettes_Intro[18];
   palette_buffer[19] = kPalettes_Intro[19];
   ClearJapaneseTextTiles();
-  CinematicFunction_Intro_Func20(addr_word_8BD1B9);
-  CinematicFunction_Intro_Func20(addr_word_8BD215);
+  CinematicFunction_Intro_Func20(6);  // CHS: 双调用 LDY #$D1B9/#$D215 → LDY #$0006 + JMP $B652/NOP×3（删第二次）
   TransferJapaneseTextTilesToVram();
   return j;
 }
@@ -3113,8 +3117,7 @@ void CinematicFunction_Intro_Func27(uint16 k) {  // 0x8BB657
     mode7_obj_preinstr_func[v1] = FUNC16(CinematicFunction_nullsub_116);
     DisableCinematicBgTilemapUpdates();
     ClearJapaneseTextTiles();
-    CinematicFunction_Intro_Func20(addr_word_8BD259);
-    CinematicFunction_Intro_Func20(addr_word_8BD2A5);
+    CinematicFunction_Intro_Func20(7);  // CHS: 双调用 LDY #$D259/#$D2A5 → LDY #$0007 + JMP $B680/NOP×3（删第二次）
     TransferJapaneseTextTilesToVram();
     cinematic_var16 = 60;
   }
@@ -3132,7 +3135,7 @@ uint16 CinematicFunction_Intro_Func29(uint16 k, uint16 j) {  // 0x8BB695
   palette_buffer[18] = kPalettes_Intro[18];
   palette_buffer[19] = kPalettes_Intro[19];
   ClearJapaneseTextTiles();
-  CinematicFunction_Intro_Func20(addr_word_8BD2D5);
+  CinematicFunction_Intro_Func20(8);  // CHS: LDY #$D2D5 → LDY #$0008
   TransferJapaneseTextTilesToVram();
   return j;
 }
@@ -3145,7 +3148,7 @@ void CinematicFunction_Intro_Func30(uint16 k) {  // 0x8BB6C0
     mode7_obj_preinstr_func[v1] = FUNC16(CinematicFunction_nullsub_116);
     DisableCinematicBgTilemapUpdates();
     ClearJapaneseTextTiles();
-    CinematicFunction_Intro_Func20(addr_word_8BD30D);
+    CinematicFunction_Intro_Func20(9);  // CHS: LDY #$D30D → LDY #$0009
     TransferJapaneseTextTilesToVram();
     cinematic_var16 = 60;
   }
@@ -3160,7 +3163,7 @@ uint16 CinematicFunction_Intro_Func31(uint16 k, uint16 j) {  // 0x8BB6ED
 uint16 CinematicFunction_Intro_Func32(uint16 k, uint16 j) {  // 0x8BB6F8
   DisableCinematicBgTilemapUpdates();
   ClearJapaneseTextTiles();
-  CinematicFunction_Intro_Func20(addr_word_8BD371);
+  CinematicFunction_Intro_Func20(10);  // CHS: LDY #$D371 → LDY #$000A
   TransferJapaneseTextTilesToVram();
   return j;
 }
