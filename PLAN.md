@@ -39,8 +39,9 @@ ROM 加载层**无需改动**：`src/snes/snes_other.c:78-95` 会把 ROM 扩展�
 |---|---|---|
 | git（PortableGit） | 版本管理；本机须 `http.sslBackend=openssl`（schannel 无凭据），已写入仓库 config（含 `http.sslVerify=false`，见第 6 节安全说明） | ✓ |
 | TCC + SDL2-2.24.1 | 快速构建（`build_tcc.bat`），已在 smre-cn 本地（git-ignored），冒烟构建通过（sm.exe 1,817,600B 与上游同源同工具链产物零偏差） | ✓ |
-| bsnes-plus 或 Mesen-S | 反汇编核心工具：加载汉化 ROM + [InsaneFirebat/SM_Debugging](https://github.com/InsaneFirebat/SM_Debugging) 符号，对照 docs/rom-diff.md 第 4 节区间逐条分析汇编 | 待安装 |
-| Python 3 | diff/区间统计脚本、disasm65816 等辅助 | 待安装 |
+| Python 3.14.7 | `Tools\Python314\`（完整安装布局，已合并修复并验证 ssl/sqlite3/zlib）；pip 受本机网络限制不可用，Python 包经 git clone 放入 `Tools\packages\` | ✓ |
+| 自研反汇编管线 | `Tools\py.bat` + `Tools\scripts\disasm_range.py`（sm65816.py 全 opcode 表 + M/X 跟踪 + 字节不变式自检）；已用复位入口 $80:841C 逐字节验证（与官方启动序列完全一致），并完成 CHS/原版 8D 区间差分冒烟 | ✓ |
+| Mesen2（首选）/ bsnes-plus（备选） | GUI 调试器：加载汉化 ROM + [InsaneFirebat/SM_Debugging](https://github.com/InsaneFirebat/SM_Debugging) 符号做断点/单步/动态验证 | 待手动下载（URL 见 `Tools\README.md`） |
 | MSYS2/gcc 或 VS2022 | 可选：生产构建与更强警告 | 可选 |
 | UPS 工具 | 不需要（已有成品 CHS/CHT ROM）；补丁重放可用 Floating IPS | — |
 
