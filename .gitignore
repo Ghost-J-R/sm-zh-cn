@@ -10,3 +10,10 @@
 SDL2.dll
 /sm.exe
 /glsl-shaders/
+
+# smre-cn additions: patched ROMs, save data, local build toolchain
+*.sfc
+*.srm
+/backup/
+/third_party/tcc/
+/third_party/SDL2-2.24.1/
