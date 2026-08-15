@@ -77,7 +77,7 @@
 ## 4. 移植顺序（按 boot 路径可达性 + 风险）
 
 1. **bank 80 复位钩子**：**已完成**（$E3:8000 全套翻译 + 对照实验零偏差）。B6ED-B6F3 散点待判定（疑似指针表低字节，B/C 类）；8693 透明（D 类）；
-2. **bank 8B 片**：8D23→E38873 **已完成**（Func20 机制全套）。**新证据（本轮诊断）**：B53F-DED6 散点中 5 处为**开场过场解压源指针改动**（bank 96/97→E7/E6，帧 0 可达——Func54 等过场函数在 boot 第一帧执行，是当前帧 0 失配的直接来源）：05BCE0/05BCE4→CinematicFunction_Intro_Func54 内 `DecompressToMem(0x96D10A→0xE78080, g_ram+0x15000)`；05C170/05C17C、05C6B8/05C6C4 同类（96→E7）；05D5F5/05D5F9、05DED1/05DED5（bank 97→E6）；05CCD7 为 STA→JSR 代码改动。剩余：A3FF→E388CB、9295/9BCA 指针值（CHS=C8F0/CHT=C8F4）、A0E3/A0E9、A48C/A490；
+2. **bank 8B 片**：8D23→E38873 **已完成**（Func20 机制全套）。**已移植（2026-08-15）**：5 处解压源散点（Func54/BlackoutFromCeres 96D10A→E78080、Func86 96EC76→E79CC0、EscapeFromCeres/Func126 97E7DE→E6EFB5，字节对照实证；运行时验证待过场可达）；9295/9BCA（logo/标题解压源 80D8→C8F0，CHT 为 C8F4）；8BCCD7 判定 C 类（cinematic 指令流经 RomPtr_8B 读取自动生效）。**已知待办**：9295/9BCA 修复后帧 0/151 出现"解压时机错位"差异（theirs=0——模拟器侧该帧未解压、C 侧一帧内推进多帧逻辑；钩子禁用实验证明与钩子无关），需在后续增量中调查 sm 帧对齐机制。剩余：A3FF→E388CB、A0E3/A0E9、A48C/A490（Intro_Initial 的 DMA 源 7F8000→E6E255 已确认、HDMA 表 8103→F480 已确认）；
 3. **bank 85 片**：8289/82B8 消息框函数、840C→E387DA、8526→E38707、825A 边框数组（B 类）——覆盖道具提示框（boot 后第一类 UI）；
 4. **bank 81 片**：8DFE（LoadInitialMenuTiles）、C5xx-EDxx 六组 tilemap（B/C 类确认后处理）；
 5. **bank 82 片**：91xx/93xx/96xx/ABxx/ACxx/B1xx/ECxx 各函数 + F710-F8B5 新块（含 E39290/E392DE 目标）——暂停/地图/装备/选项菜单（需交互验证）；
