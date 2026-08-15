@@ -150,8 +150,150 @@ void memset7E(uint16 *k, uint16 a, uint16 j) {  // 0x8083F6
   } while (j -= 2);
 }
 
+// ===== CHS 补丁新增代码：复位钩子 $E3:8000-814B =====
+// 来源：CHS 补丁把复位向量 $80:841F 的 JML $808423 改为 JML $E38000。
+// 钩子语义：清 $7F RAM / PPU / VRAM / CGRAM → MVN 把字库 bank E0/E1 拷入 $7F RAM
+// → DMA 写出开机闪屏 → 渐亮 → 长延时 → 渐灭 → 全部清空 → JML $808423 回原版初始化。
+// 纯耗时循环（delay）在 sm 架构下无帧影响：模拟器侧 RunCpuUntilPC 无 cycle 限制、
+// 一逻辑帧内跑完（不读 $4212、不推进 PPU），C 侧省略循环体后帧边界状态一致。
+
+void ResetHookDelay_8047(void) {  // $E3:8047 - LDY #$7FFF / DEY / BNE / RTS
+  // 纯耗时循环（无 IO、无内存副作用）：C 侧省略循环体，见文件头注释。
+}
+
+void ResetHookFadeIn_804E(void) {  // $E3:804E - INIDISP 0x0→0xF，每步 JSR $8047
+  for (int i = 0; i < 0x10; i++) {  // LDA #$00 / STA $2100 / JSR / INC / CMP #$10 / BNE
+    WriteReg(INIDISP, i);
+    ResetHookDelay_8047();
+  }
+}
+
+void ResetHookFadeOut_806C(void) {  // $E3:806C - INIDISP 0xF→0x0，每步 JSR $8047
+  for (int i = 0xF; i >= 0; i--) {  // LDA #$0F / STA $2100 / JSR / DEC / BPL
+    WriteReg(INIDISP, i);
+    ResetHookDelay_8047();
+  }
+}
+
+void ResetHookClearWram7F_807C(void) {  // $E3:807C - DBR=7F；清 $7F:0000-FFFF（64KB）
+  // LDX #$0000 / STZ $0000,X / INX / INX / BNE：X 从 0 步进 2 绕回 0，覆盖 0x10000 字节。
+  memset(g_ram + 0x10000, 0, 0x10000);
+}
+
+void ResetHookClearPpuRegs_8091(void) {  // $E3:8091 - 清 $2100-$2131（各写 0 两次）+ COLDATA
+  for (int i = 0; i < 0x32; i++) {  // LDX #$0000 / LDA #$00 / STA $2100,X ×2 / INX / CPX #$32 / BCC
+    WriteReg(INIDISP + i, 0);
+    WriteReg(INIDISP + i, 0);
+  }
+  WriteReg(0x2132, 0xE0);  // COLDATA 固定色
+  WriteReg(0x2133, 0x00);
+}
+
+void ResetHookSetDbr0_80B1(void) {  // $E3:80B1 - LDA #$0000 / PHA / PLB / PLB（DBR=0）
+  // DBR 是 CPU 内部状态，C 侧不建模（sm 惯例），保留空壳以对应 asm 调用序列。
+}
+
+void ResetHookMvnFontToWram_80B8(void) {  // $E3:80B8 - MVN $7F,$E0 与 MVN $7F,$E1
+  // MVN $7F,$E0：$E0:8000-FFFF → $7F:0000-7FFF（LDA #$7FFF，0x8000 字节）
+  memcpy(g_ram + 0x10000, RomFixedPtr(0xE08000), 0x8000);
+  // MVN $7F,$E1：$E1:8000-E7FF → $7F:8000-E7FF（LDA #$67FF，0x6800 字节）
+  memcpy(g_ram + 0x18000, RomFixedPtr(0xE18000), 0x6800);
+}
+
+void ResetHookInitPpuCtl_80D3(void) {  // $E3:80D3 - STZ $420C / BGMODE=3 / VMAIN=$80
+  WriteReg(HDMAEN, 0);
+  WriteReg(BGMODE, 3);
+  WriteReg(VMAIN, 0x80);
+}
+
+void ResetHookInitBgCtl_80E5(void) {  // $E3:80E5 - BG1SC=$79 / BG12NBA=0
+  WriteReg(BG1SC, 0x79);
+  WriteReg(BG12NBA, 0);
+}
+
+void ResetHookInitTm_80F4(void) {  // $E3:80F4 - TM=$01
+  WriteReg(TM, 1);
+}
+
+void ResetHookDmaVramFrom7F_80FE(void) {  // $E3:80FE - 两次 VRAM DMA（源 $7F:0000，各 0x8000B）
+  WriteReg(INIDISP, 0x8F);
+  WriteRegWord(VMADDL, 0x0000);
+  static const StartDmaCopy d1 = { 0, 1, 0x18, LONGPTR(0x7f0000), 0x8000 };  // $4300=$1801/$4302=0/$4304=7F/$4305=$8000
+  SetupDmaTransfer(&d1);
+  WriteReg(MDMAEN, 1);  // channel 0
+  WriteRegWord(VMADDL, 0x4000);
+  static const StartDmaCopy d2 = { 0, 1, 0x18, LONGPTR(0x7f0000), 0x8000 };
+  SetupDmaTransfer(&d2);
+  WriteReg(MDMAEN, 1);
+}
+
+void ResetHookDmaCgramFrom7F_814C(void) {  // $E3:814C - CGRAM DMA（源 $7F:0000，0x200B）
+  WriteReg(INIDISP, 0x8F);
+  WriteReg(CGADD, 0);  // STZ $2121
+  static const StartDmaCopy d = { 0, 0, 0x22, LONGPTR(0x7f0000), 0x200 };  // $4300=0/$4301=$22
+  SetupDmaTransfer(&d);
+  WriteReg(MDMAEN, 1);
+}
+
+void ResetHookDmaCgramFromE1_8179(void) {  // $E3:8179 - CGRAM DMA（源 $E1:F800，0x200B）
+  WriteReg(INIDISP, 0x8F);
+  WriteReg(CGADD, 0);
+  static const StartDmaCopy d = { 0, 0, 0x22, LONGPTR(0xe1f800), 0x200 };
+  SetupDmaTransfer(&d);
+  WriteReg(MDMAEN, 1);
+}
+
+void ResetHookDmaVram7FE800_81A6(void) {  // $E3:81A6 - VRAM DMA（源 $7F:0000，0xE800B，VMADDL=0）
+  WriteReg(INIDISP, 0x8F);
+  WriteRegWord(VMADDL, 0x0000);
+  static const StartDmaCopy d = { 0, 1, 0x18, LONGPTR(0x7f0000), 0xE800 };
+  SetupDmaTransfer(&d);
+  WriteReg(MDMAEN, 1);
+}
+
+void ResetHookDmaVramE1_81D2(void) {  // $E3:81D2 - VRAM DMA（源 $E1:E800，0x1000B，VMADDL=$7800）
+  WriteReg(INIDISP, 0x8F);
+  WriteRegWord(VMADDL, 0x7800);
+  static const StartDmaCopy d = { 0, 1, 0x18, LONGPTR(0xe1e800), 0x1000 };
+  SetupDmaTransfer(&d);
+  WriteReg(MDMAEN, 1);
+}
+
+void ResetHookLongDelay_81FE(void) {  // $E3:81FE - REP #$30 / LDX #$5B / 91 次 JSR $8047
+  for (int i = 0; i < 0x5B; i++)  // JSR $8047 / DEX / BNE：纯耗时，循环体为空壳
+    ResetHookDelay_8047();
+}
+
+void ResetHook_CHS(void) {  // $E3:8000 主体（CHS 补丁复位钩子）
+  // 调用序列与 $E3:8002-8043 的 21 条 JSR 一一对应；末尾 JML $808423 由
+  // 调用方（Vector_RESET_Async）继续执行原版初始化，无需建模。
+  ResetHookClearWram7F_807C();    // JSR $807C
+  ResetHookSetDbr0_80B1();        // JSR $80B1
+  ResetHookClearPpuRegs_8091();   // JSR $8091
+  ResetHookInitPpuCtl_80D3();     // JSR $80D3
+  ResetHookDmaVramFrom7F_80FE();  // JSR $80FE
+  ResetHookDmaCgramFrom7F_814C(); // JSR $814C
+  ResetHookMvnFontToWram_80B8();  // JSR $80B8
+  ResetHookSetDbr0_80B1();        // JSR $80B1
+  ResetHookInitBgCtl_80E5();      // JSR $80E5
+  ResetHookDmaCgramFromE1_8179(); // JSR $8179
+  ResetHookDmaVram7FE800_81A6();  // JSR $81A6
+  ResetHookDmaVramE1_81D2();      // JSR $81D2
+  ResetHookInitTm_80F4();         // JSR $80F4
+  ResetHookFadeIn_804E();         // JSR $804E
+  ResetHookLongDelay_81FE();      // JSR $81FE
+  ResetHookFadeOut_806C();        // JSR $806C
+  ResetHookClearWram7F_807C();    // JSR $807C（二次清零）
+  ResetHookSetDbr0_80B1();        // JSR $80B1
+  ResetHookDmaVramFrom7F_80FE();  // JSR $80FE（清 VRAM）
+  ResetHookDmaCgramFrom7F_814C(); // JSR $814C（清 CGRAM）
+  ResetHookClearPpuRegs_8091();   // JSR $8091
+  // JML $808423 —— 返回后由 Vector_RESET_Async 继续
+}
+
 CoroutineRet Vector_RESET_Async(void) {  // 0x80841C
   COROUTINE_BEGIN(coroutine_state_0, 1)
+  ResetHook_CHS();  // CHS: $80:841F JML $E38000（原版为 JML $808423 直接初始化）；soft reset 走 COROUTINE_MANUAL_POS(3)，不经过此处
   WriteReg(MEMSEL, 1);
   reg_MEMSEL = 1;
   // Removed code to wait 4 frames
