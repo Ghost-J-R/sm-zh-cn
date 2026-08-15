@@ -1198,6 +1198,40 @@ void LoadPauseScreenBaseTilemaps(void) {  // 0x828EDA
   static const StartDmaCopy unk_828F30 = { 1, 0, 0x80, LONGPTR(0xb6e800), 0x0800 };
   SetupDmaTransfer(&unk_828F30);
   WriteReg(MDMAEN, 2);
+  // CHS: JSL $E388DD（$82:8F38 原 LDA #$02/STA $420B 被替换，钩子开头已重现 MDMAEN）
+  // —— 地图收集统计（E38969/E38985/E389B5）+ 区域标签颜色（E388FA）。
+  for (int i = 0x9B; i <= 0xA2; i++)
+    g_ram[i] = 0;  // STZ $9B-$A2
+  for (int x = 0x13; x >= 0; x--) {  // E38969：$7ED870+0..0x13 逐字节
+    g_ram[0xA2] = (uint8)x;
+    uint16 v = item_bit_array[x];
+    for (int k = 7; k >= 0; k--) {  // E38985：$E39031 8 位掩码
+      if ((v & *(uint8 *)RomPtr(0xE39031 + k)) != 0) {
+        g_ram[0x9B] = (uint8)(g_ram[0x9B] + 1);  // E389B5：INC $9B
+        if (area_index < 5) {
+          uint16 idx = (uint16)((g_ram[0xA2] & 0xFF) * 8 + k);
+          if (*(uint8 *)RomPtr(0xE39039 + idx) == (uint8)area_index) {
+            uint8 j = *(uint8 *)RomPtr(0xE390D9 + idx);
+            g_ram[0x9C + j] = (uint8)(g_ram[0x9C + j] + 1);  // INC $9C,X
+          }
+        }
+      }
+    }
+  }
+  if (area_index >= 5) {  // E38985 尾：$9C-$9F = FF
+    g_ram[0x9C] = g_ram[0x9D] = g_ram[0x9E] = g_ram[0x9F] = 0xFF;
+  }
+  {  // E388FA：6 字标签色（$7E09E0/09DE/09DC 键 × $E38BEB/$E38DEB 索引 × $E38FEB 值表）
+    uint16 k1 = g_ram[0x9E0] * 2;
+    *(uint16 *)(g_ram + 0x3DEE) = *(uint16 *)RomPtr(0xE38FEB + *(uint16 *)RomPtr(0xE38BEB + k1) * 2);
+    *(uint16 *)(g_ram + 0x3DF0) = *(uint16 *)RomPtr(0xE38FEB + *(uint16 *)RomPtr(0xE38DEB + k1) * 2);
+    uint16 k2 = g_ram[0x9DE] * 2;
+    *(uint16 *)(g_ram + 0x3DF4) = *(uint16 *)RomPtr(0xE38FEB + *(uint16 *)RomPtr(0xE38BEB + k2) * 2);
+    *(uint16 *)(g_ram + 0x3DF6) = *(uint16 *)RomPtr(0xE38FEB + *(uint16 *)RomPtr(0xE38DEB + k2) * 2);
+    uint16 k3 = g_ram[0x9DC] * 2;
+    *(uint16 *)(g_ram + 0x3DFA) = *(uint16 *)RomPtr(0xE38FEB + *(uint16 *)RomPtr(0xE38BEB + k3) * 2);
+    *(uint16 *)(g_ram + 0x3DFC) = *(uint16 *)RomPtr(0xE38FEB + *(uint16 *)RomPtr(0xE38DEB + k3) * 2);
+  }
   uint16 v0 = addr_kDummySamusWireframeTilemap;
   uint16 v1 = 236;
   int m = 17;
@@ -1364,8 +1398,20 @@ void PauseMenu_5(void) {  // 0x829186
   }
 }
 void PauseMenu_3_MapToEquipment_Load(void) {  // 0x8291AB
-  // CHS: $82:91AE JSL $82BB30 → LDA $E383,X（无副作用占位，A 随即被 JSR $AB47 覆盖）
-  //      ——删除电梯目的地显示调用，其余保持。
+  // CHS: JSL $E383BF（$82:91AE 原 JSL $82BB30 被替换）——SEP/LDA $69/ORA #$11/STA $69
+  // （reg_TM |= 0x11：启用 BG1+OBJ）+ JSL $E39290 + JSL $82BB30（电梯显示保留）。
+  reg_TM |= 0x11;
+  {  // JSL $E39290：$B6F000 0x20 字节 → $7EC000（E391B0 循环）+ DMA $B6:E180 0x4C0 → VRAM 0x38C0
+    for (int i = 0; i < 0x10; i++)
+      *(uint16 *)(g_ram + 0xC000 + i * 2) = *(uint16 *)RomPtr(0xB6F000 + i * 2);
+    WriteReg(VMAIN, 0x80);
+    WriteReg(VMADDL, 0xC0);
+    WriteReg(VMADDH, 0x38);
+    static const StartDmaCopy unk_E39290 = { 1, 1, 0x18, LONGPTR(0xb6e180), 0x04c0 };
+    SetupDmaTransfer(&unk_E39290);
+    WriteReg(MDMAEN, 2);
+  }
+  DisplayMapElevatorDestinations();
   EquipmentScreenSetupReserveMode();
   EquipmentScreenTransferBG1Tilemap();
   pause_screen_mode = 1;
@@ -1551,19 +1597,41 @@ void LoadPauseMenuMapTilemapAndAreaLabel(void) {  // 0x8293C3
   static const StartDmaCopy unk_8293E9 = { 1, 1, 0x18, LONGPTR(0x7e4000), 0x1000 };
   SetupDmaTransfer(&unk_8293E9);
   WriteReg(MDMAEN, 2);
-  WriteReg(VMADDL, 0xAA);
-  WriteReg(VMADDH, 0x38);
-  WriteReg(VMAIN, 0x80);
-  WriteReg(DMAP1, 1);
-  WriteReg(BBAD1, 0x18);
-  WriteReg(DAS1L, 0x18);
-  WriteReg(DAS1H, 0);
-  uint16 v0 = area_index;
-  if (!sign16(area_index - 7))
-    v0 = 0;
-  WriteRegWord(A1T1L, kPauseAreaLabelTilemap[v0]);
-  WriteReg(A1B1, 0x82);
-  WriteReg(MDMAEN, 2);
+  // CHS: JSL $E38483（$82:93F6 原 VMADDL=0xAA/VMADDH=0x38/VMAIN/DMAP1/BBAD1/DAS1/A1T1L/A1B1/MDMAEN
+  // 段被替换）——DMA $B6AE00 0x1200 → VRAM 0x1700；再 JSL $E38510（$82:9428）：按 area 索引经
+  // $82:F710/$82:F720 两张表各上传 0x10 字节到 VRAM 0x388C/0x38AC（JSR $84B0/$84E0 子函数）。
+  {
+    static const StartDmaCopy unk_E38483 = { 1, 1, 0x18, LONGPTR(0xb6ae00), 0x1200 };
+    SetupDmaTransfer(&unk_E38483);
+    WriteReg(VMADDL, 0);
+    WriteReg(VMADDH, 0x17);
+    WriteReg(VMAIN, 0x80);
+    WriteReg(MDMAEN, 2);
+  }
+  {
+    uint16 v0 = area_index;
+    if (!sign16(area_index - 7))
+      v0 = 0;
+    uint16 src = *(uint16 *)RomPtr_82(0x82F710 + v0 * 2);
+    WriteReg(VMADDL, 0x8C);
+    WriteReg(VMADDH, 0x38);
+    WriteReg(VMAIN, 0x80);
+    StartDmaCopy unk_E384B0 = { 1, 1, 0x18, LONGPTR(0x820000 + src), 0x10 };
+    SetupDmaTransfer(&unk_E384B0);
+    WriteReg(MDMAEN, 2);
+  }
+  {
+    uint16 v0 = area_index;
+    if (!sign16(area_index - 7))
+      v0 = 0;
+    uint16 src = *(uint16 *)RomPtr_82(0x82F720 + v0 * 2);
+    WriteReg(VMADDL, 0xAC);
+    WriteReg(VMADDH, 0x38);
+    WriteReg(VMAIN, 0x80);
+    StartDmaCopy unk_E384E0 = { 1, 1, 0x18, LONGPTR(0x820000 + src), 0x10 };
+    SetupDmaTransfer(&unk_E384E0);
+    WriteReg(MDMAEN, 2);
+  }
 }
 
 void LoadPauseMenuMapTilemap(void) {  // 0x82943D
@@ -1694,9 +1762,14 @@ void DrawRoomSelectMap(void) {  // 0x829517
 }
 
 void DrawRoomSelectMapAreaLabel(uint16 *dst) {  // 0x829628
-  const uint16 *v2 = (const uint16 * )RomPtr_82(kPauseAreaLabelTilemap[area_index]);
-  for(int i = 0; i < 12; i++)
-    dst[i] = v2[i] & 0xEFFF;
+  // CHS: JSL $E38444（$82:9630 原 LDA $965F,X/TAX/LDY #0/循环 AND #$EFFF/STA [$00],Y 被替换）
+  // —— 两行各 8 字中文区域名：源 = $82:F710 表[area_index*2] 指向的数据；
+  // 每字 (v & 0xEFFF) - 0x40；第一行写 dst，第二行写 dst+0x20（asm 中 $00 指针 +0x40 字节）。
+  const uint16 *src = (const uint16 *)RomPtr_82(*(uint16 *)RomPtr_82(0x82F710 + area_index * 2));
+  for (int i = 0; i < 8; i++)
+    dst[i] = (src[i] & 0xEFFF) - 0x40;
+  for (int i = 0; i < 8; i++)
+    dst[0x20 + i] = (src[8 + i] & 0xEFFF) - 0x40;
 }
 
 void SetupMapScrollingForPauseMenu(uint16 a) {  // 0x829E27
@@ -2346,6 +2419,27 @@ void EquipmentScreenSetupReserveMode(void) {  // 0x82AB47
   int16 v7;
   int16 v8;
 
+  // CHS: JSL $E38352（$82:AB4A 原 LDA $B1/STA $BD 被替换）——REP#$30/$C4=0/$C6=FFFF +
+  // JSR $E38366：DMA $B6A800 0x600→VRAM 0x1400 + DMA $E7AD10 0x1200→VRAM 0x1700；
+  // 钩子末尾 LDA $B1/STA $BD = 下面原版 reg_BG4HOFS = reg_BG1HOFS。
+  g_word_7E00C4[0] = 0;
+  g_word_7E00C4[1] = 0xFFFF;
+  {
+    static const StartDmaCopy unk_E38366_1 = { 1, 1, 0x18, LONGPTR(0xb6a800), 0x0600 };
+    SetupDmaTransfer(&unk_E38366_1);
+    WriteReg(VMADDL, 0);
+    WriteReg(VMADDH, 0x14);
+    WriteReg(VMAIN, 0x80);
+    WriteReg(MDMAEN, 2);
+  }
+  {
+    static const StartDmaCopy unk_E38366_2 = { 1, 1, 0x18, LONGPTR(0xe7ad10), 0x1200 };
+    SetupDmaTransfer(&unk_E38366_2);
+    WriteReg(VMADDL, 0);
+    WriteReg(VMADDH, 0x17);
+    WriteReg(VMAIN, 0x80);
+    WriteReg(MDMAEN, 2);
+  }
   reg_BG4HOFS = reg_BG1HOFS;
   reg_BG4VOFS = reg_BG1VOFS;
   reg_BG1HOFS = 0;
@@ -2406,6 +2500,13 @@ void EquipmentScreenTransferBG1Tilemap(void) {  // 0x82AC22
   SetupDmaTransfer(&unk_82AC3B);
   WriteReg(MDMAEN, 2);
   reg_BG1VOFS = 0;
+  // CHS: JSL $E3820A（$82:AC52 原 LDA $0755/AND #$FF 被替换）——JSR $E38334：若装备类别
+  // 或储备血量低字节非零且装备类别低字节 != $C6 → $C6=装备类别低字节、$C4=0xCD（M=8 低字节语义）。
+  if (((pausemenu_equipment_category_item & 0xFF) != 0 || (samus_max_reserve_health & 0xFF) != 0)
+      && (uint8)pausemenu_equipment_category_item != (uint8)g_word_7E00C4[1]) {
+    g_word_7E00C4[1] = (g_word_7E00C4[1] & 0xFF00) | (pausemenu_equipment_category_item & 0xFF);
+    g_word_7E00C4[0] = 0xCD;
+  }
 }
 static Func_V *const kEquipmentScreenCategories[4] = {  // 0x82AC4F
   EquipmentScreenCategory_Tanks,
@@ -2740,6 +2841,15 @@ void EquipmentScreenCategory_Boots_MoveResponse(void) {  // 0x82B160
 
 void WriteSamusWireframeTilemapAndQueue(void) {  // 0x82B1E0
   WriteSamusWireframeTilemap();
+  // CHS: JSL $E38217（$82:B1E6 原 LDX $0330/LDA #$00 被替换）——若装备类别或储备血量低字节
+  // 非零：$E4:E633/$E4:E645 各 9 字节 → $7E3D84/$7E3DC4（JSR $8235/$8248，M=8 逐字节）；
+  // 钩子末尾 LDX $0330/LDA #$00 与原版一致。
+  if ((pausemenu_equipment_category_item & 0xFF) != 0 || (samus_max_reserve_health & 0xFF) != 0) {
+    for (int i = 0; i < 9; i++) {
+      g_ram[0x3D84 + i] = *(uint8 *)RomPtr(0xE4E633 + i);
+      g_ram[0x3DC4 + i] = *(uint8 *)RomPtr(0xE4E645 + i);
+    }
+  }
   uint16 v0 = vram_write_queue_tail;
   gVramWriteEntry(vram_write_queue_tail)->size = 1280;
   v0 += 2;
