@@ -782,6 +782,11 @@ void CinematicFunction_Intro_Func20(uint16 j) {  // 0x8B8D23
   uint16 x = (uint16)((uint16)(t << 1) + t);                 // ASL(16 位截断) / CLC / ADC $CC / TAX
   const uint8 *e = (const uint8 *)RomFixedPtr(0xE6E237 + x);  // LDA $E6E237,X + LDA $E6E238,X（长索引可跨 bank）
   uint32 src = e[0] | ((uint32)e[1] << 8) | ((uint32)e[2] << 16);  // $CE:$CD:$CC 24 位源指针
+  // DP 副作用（帧末快照必须一致）：STA $CC（M=16）→ $CC/$CD={lo,hi}；STA $CD（M=16）
+  // → $CD/$CE={hi,bank}；帧末 STZ $CA/STZ $CC 后残留 $CE=bank（如 0xE6/E7），
+  // $CA-$CD 清零。早期移植漏写 $CE 导致开场文本帧 1 字节失配（7E:00CE）。
+  *(uint16 *)(g_ram + 0xCC) = e[0] | ((uint16)e[1] << 8);
+  *(uint16 *)(g_ram + 0xCD) = e[1] | ((uint16)e[2] << 8);
   const uint16 *s = (const uint16 *)RomFixedPtr(src);        // LDA [$CC]（长间接读源）
   uint16 *dst = ram4000.intro_japanese_text_tiles;           // STA $7E4000,X
   // 四个 0x180 字节块，LDX #$0000/#$0300/#$0180/#$0480 依次执行；源连续推进
@@ -790,6 +795,8 @@ void CinematicFunction_Intro_Func20(uint16 j) {  // 0x8B8D23
   memcpy(dst + 0x180, s + 0x0C0, 0x180);
   memcpy(dst + 0x0C0, s + 0x180, 0x180);
   memcpy(dst + 0x240, s + 0x240, 0x180);
+  *(uint16 *)(g_ram + 0xCA) = 0;                             // STZ $CA
+  *(uint16 *)(g_ram + 0xCC) = 0;                             // STZ $CC（M=16 → $CC/$CD 清零，$CE 保留 bank）
 }
 
 void TransferJapaneseTextTilesToVram(void) {  // 0x8B8DE6
@@ -3508,7 +3515,7 @@ void CinematicFunction_Intro_Func54(void) {  // 0x8BBCA0
   } while ((int16)(v0 - 512) < 0);
   DecompressToMem(0x95A82F, g_ram + 0x10000);
   DecompressToMem(0x96FE69, g_ram + 0x14000);
-  DecompressToMem(0xE78080, g_ram + 0x15000);  // CHS: 8BBCE0 A9 00 96/A9 0A D1 → A9 00 E7/A9 00 80（源 0x96D10A→0xE78080）
+  DecompressToMem(0xE78000, g_ram + 0x15000);  // CHS: 8BBCE0 A9 00 96/A9 0A D1 → A9 00 E7/A9 00 80（源 0x96D10A→0xE78000；早期移植误抄 0xE78080）
   WriteRegWord(VMADDL, 0);
   WriteReg(VMAIN, 0x80);
   static const StartDmaCopy unk_8BBD04 = { 1, 0, 0x19, LONGPTR(0x7f0000), 0x4000 };
@@ -3776,7 +3783,7 @@ void CinematicFunctionBlackoutFromCeres(void) {  // 0x8BC11B
   } while ((int16)(v2 - 512) < 0);
   DecompressToMem(0x95A82F, g_ram + 0x10000);
   DecompressToMem(0x96FE69, g_ram + 0x14000);
-  DecompressToMem(0xE78080, g_ram + 0x15000);  // CHS: 8BC178 A9 00 96/A9 0A D1 → A9 00 E7/A9 00 80（源 0x96D10A→0xE78080）
+  DecompressToMem(0xE78000, g_ram + 0x15000);  // CHS: 8BC178 A9 00 96/A9 0A D1 → A9 00 E7/A9 00 80（源 0x96D10A→0xE78000；早期移植误抄 0xE78080）
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0);
   WriteReg(VMAIN, 0x80);

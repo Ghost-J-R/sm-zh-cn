@@ -4706,15 +4706,17 @@ void GameOptionsMenuItemFunc_2_ToggleJapanese(void) {  // 0x82EDDA
 }
 
 void OptionsMenuFunc4(void) {  // 0x82EDED
-  // CHS: $82:EDF6/EE28 两个分支第一个 OptionsMenuFunc5 的 LDY #$0018 → #$0032（中文行更长）。
+  // CHS: $82:EDF6/EE01/EE28/EE33 四处 OptionsMenuFunc5 调用的 LDY #$0018 → #$0032（中文行更长）。
+  // 原移植只改了每分支第一处调用，第二处（k=0x2C8）仍为 0x18 → 高亮止于 tilemap 索引 367，
+  // ROM 侧覆盖到 380 → 帧 1293 存档选择→选项菜单路径失配 13 字（7E:32E0-32FA，缺 0x0400）。
   if (japanese_text_flag) {
     OptionsMenuFunc5(0x400, 0x288, 0x32);
-    OptionsMenuFunc5(0x400, 0x2C8, 0x18);
+    OptionsMenuFunc5(0x400, 0x2C8, 0x32);
     OptionsMenuFunc5(0, 0x348, 0x32);
     OptionsMenuFunc5(0, 0x388, 0x32);
   } else {
     OptionsMenuFunc5(0, 0x288, 0x32);
-    OptionsMenuFunc5(0, 0x2C8, 0x18);
+    OptionsMenuFunc5(0, 0x2C8, 0x32);
     OptionsMenuFunc5(0x400, 0x348, 0x32);
     OptionsMenuFunc5(0x400, 0x388, 0x32);
   }
