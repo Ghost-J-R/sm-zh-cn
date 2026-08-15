@@ -1349,10 +1349,96 @@ void MainPauseRoutine(void) {
   kPauseMenuFuncs[menu_index]();
 }
 
+// ===== CHS 补丁新增代码：暂停地图主循环 + 收集率标签钩子（bank 82/E3）=====
+// 来源：CHS 把 $82:9120 的暂停地图函数体替换为 JSR $F810（新增主循环）+ JMP $913B，
+// 并在 $82:F710-F8B5 新增跳转表/主循环/绘制子程序，在 bank E3 新增标签上传钩子。
+
+void CHS_MapScreen_LabelPaletteUpload(void) {  // $E3:9199
+  // REP#$30/LDX#0：16 字 $E3:9179 → 调色板缓冲 $7E:C000（收集率标签色）
+  for (int i = 0; i < 0x10; i++)
+    *(uint16 *)(g_ram + 0xC000 + i * 2) = GET_WORD(RomPtr(0xE39179) + i * 2);
+}
+
+static void CHS_MapScreen_LabelWrite_92C1(uint16 x) {  // $E3:92C1
+  // PHX/LDA $E38BEB,X/ASL/TAX/LDA $E38FEB,X/STA $2118/PLX/LDA $E38DEB,X/ASL/TAX/LDA $E38FEB,X/STA $2118/RTS
+  WriteRegWord(VMDATAL, GET_WORD(RomPtr(0xE38FEB) + (uint16)GET_WORD(RomPtr(0xE38BEB) + x) * 2));
+  WriteRegWord(VMDATAL, GET_WORD(RomPtr(0xE38FEB) + (uint16)GET_WORD(RomPtr(0xE38DEB) + x) * 2));
+}
+
+void CHS_MapScreen_LabelUpload(void) {  // $E3:91C7
+  // 收集率标签 VRAM 上传：DMA $E7:BF10 0x400 → VRAM $38E0
+  WriteReg(VMAIN, 0x80);
+  WriteRegWord(VMADDL, 0x38E0);
+  static const StartDmaCopy kChsLabelTilesDma = { 1, 1, 0x18, LONGPTR(0xE7BF10), 0x0400 };
+  SetupDmaTransfer(&kChsLabelTilesDma);
+  WriteReg(MDMAEN, 2);
+  // area_index<5 时按 6 个区域排队标签（$E39013[area*6+y] 非零才写）
+  if (area_index < 5) {
+    WriteReg(VMAIN, 0x80);
+    for (int y = 0; y < 6; y++) {
+      uint8 v = RomPtr(0xE39013)[area_index * 6 + y];  // LDA $E39013,X/AND #$FF（16 位装载取低字节）
+      if (v != 0) {
+        WriteRegWord(VMADDL, GET_WORD(RomPtr(0xE392E8) + y * 2));          // TYA/ASL/TAX/LDA $E392E8,X
+        CHS_MapScreen_LabelWrite_92C1((uint16)(uint8)g_ram[0x9C + y] * 2);  // LDA $009C,Y/AND #$FF/ASL/TAX/JSR $92C1
+        WriteRegWord(VMDATAL, 0x281C);                                      // LDA #$281C/STA $2118
+        CHS_MapScreen_LabelWrite_92C1(v * 2);                               // PLA/ASL/TAX/JSR $92C1
+      }
+    }
+  }
+  // 尾段（无条件）：LDX #$0C + $9B 索引的三次 $E38FFF 字写入
+  WriteRegWord(VMADDL, GET_WORD(RomPtr(0xE392E8) + 0x0C));
+  uint16 x9b = (uint16)(uint8)g_ram[0x9B] * 2;
+  WriteRegWord(VMDATAL, GET_WORD(RomPtr(0xE38FFF) + (uint16)GET_WORD(RomPtr(0xE389EB) + x9b) * 2));
+  WriteRegWord(VMDATAL, GET_WORD(RomPtr(0xE38FFF) + (uint16)GET_WORD(RomPtr(0xE38BEB) + x9b) * 2));
+  WriteRegWord(VMDATAL, GET_WORD(RomPtr(0xE38FFF) + (uint16)GET_WORD(RomPtr(0xE38DEB) + x9b) * 2));
+}
+
+void CHS_MapScreen_LoadGfx_DMA(void) {  // $E3:9290
+  // JSL $E391B0：16 字 $B6:F000 → $7E:C000；VMAIN=0x80；DMA $B6:E180 0x4C0 → VRAM $38C0
+  for (int i = 0; i < 0x10; i++)
+    *(uint16 *)(g_ram + 0xC000 + i * 2) = GET_WORD(RomPtr(0xB6F000) + i * 2);
+  WriteReg(VMAIN, 0x80);
+  WriteRegWord(VMADDL, 0x38C0);
+  static const StartDmaCopy kChsLabelTilesDma2 = { 1, 1, 0x18, LONGPTR(0xB6E180), 0x04C0 };
+  SetupDmaTransfer(&kChsLabelTilesDma2);
+  WriteReg(MDMAEN, 2);
+}
+
+void CHS_MapScreen_QueueSelectSfx(void) {  // $E3:92DE
+  QueueSfx1_Max6(0x38);  // REP#$30/LDA #$38/JSL $809049
+}
+
+void CHS_MapScreen_MainLoop(void) {  // $82:F815
+  // Select（$05E1&0x2000）切换收集率标签显示并触发标签/音效钩子
+  if ((newly_held_down_timed_held_input & 0x2000) != 0) {
+    if ((reg_TM & 1) == 1) {                 // LDA $69/AND #$01/CMP #$01/BEQ
+      reg_TM &= ~1;                          // PLA/AND #$FE/STA $69
+      CHS_MapScreen_LabelPaletteUpload();    // JSL $E39199
+      CHS_MapScreen_LabelUpload();           // JSL $E391C7
+      CHS_MapScreen_QueueSelectSfx();        // JSL $E392DE
+      return;                                // RTL
+    }
+    reg_TM |= 1;                             // PLA/ORA #$01/STA $69
+    CHS_MapScreen_LoadGfx_DMA();             // JSL $E39290
+    CHS_MapScreen_QueueSelectSfx();          // JSL $E392DE
+  }  // 开标签后 BRA $F821 落入绘制循环
+  if ((reg_TM & 1) == 1) {                   // LDA $69/AND #$01/CMP #$01/BEQ $F82D
+    HandlePauseScreenLR();                   // JSR $A505
+    HandlePauseScreenStart();                // JSR $A5B7
+    HandleMapScrollArrows();                 // JSL $82B934
+    MapScrolling();                          // JSL $82925D
+    MapScreenDrawSamusPositionIndicator();   // JSR $B9C8
+    DrawMapIcons();                          // JSL $82B672
+    DisplayMapElevatorDestinations();        // JSL $82BB30
+  } else {
+    HandlePauseScreenLR();                   // $F849：仅 LR/Start
+    HandlePauseScreenStart();
+  }
+}
+
 void PauseMenu_0_MapScreen(void) {  // 0x829120
-  // CHS: JSR $F810（纯空操作：JSL $F815=RTS 后 RTS）+ JMP $913B
-  //      （913B = LDA #$0000 / STA $0763 / RTS）——整函数缩减为仅置 pause_screen_mode=0，
-  //      跳过 LR/Start/滚动箭头/滚动/萨姆斯位置/地图图标/电梯目的地全部调用。
+  // CHS: REP #$30 / JSR $F810（→ JSL $82F815 主循环）/ JMP $913B（LDA #0/STA $0763/RTS）
+  CHS_MapScreen_MainLoop();
   pause_screen_mode = 0;
 }
 
@@ -1401,16 +1487,7 @@ void PauseMenu_3_MapToEquipment_Load(void) {  // 0x8291AB
   // CHS: JSL $E383BF（$82:91AE 原 JSL $82BB30 被替换）——SEP/LDA $69/ORA #$11/STA $69
   // （reg_TM |= 0x11：启用 BG1+OBJ）+ JSL $E39290 + JSL $82BB30（电梯显示保留）。
   reg_TM |= 0x11;
-  {  // JSL $E39290：$B6F000 0x20 字节 → $7EC000（E391B0 循环）+ DMA $B6:E180 0x4C0 → VRAM 0x38C0
-    for (int i = 0; i < 0x10; i++)
-      *(uint16 *)(g_ram + 0xC000 + i * 2) = *(uint16 *)RomPtr(0xB6F000 + i * 2);
-    WriteReg(VMAIN, 0x80);
-    WriteReg(VMADDL, 0xC0);
-    WriteReg(VMADDH, 0x38);
-    static const StartDmaCopy unk_E39290 = { 1, 1, 0x18, LONGPTR(0xb6e180), 0x04c0 };
-    SetupDmaTransfer(&unk_E39290);
-    WriteReg(MDMAEN, 2);
-  }
+  CHS_MapScreen_LoadGfx_DMA();  // JSL $E39290（$B6:F000→$7E:C000 + DMA $B6:E180 0x4C0→VRAM $38C0）
   DisplayMapElevatorDestinations();
   EquipmentScreenSetupReserveMode();
   EquipmentScreenTransferBG1Tilemap();

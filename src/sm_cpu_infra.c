@@ -729,12 +729,21 @@ Snes *SnesInit(const char *filename) {
 #if 1
   // 以下两处 patch 是原版 sm 对 $82:896B "JSR ($8981,X)" 的等价重写（JSR $F70F → JMP ($8981,X)）。
   // CHS/CHT 汉化补丁把 $82:F710 起改为 8 项指针跳转表（F730/F750/...），无条件 patch 会把表第一项
-  // 破坏为 81 89。故仅当 F710 处为原版空白(0xFF)时才打 patch；汉化 ROM 跳过（模拟器侧跑原版
-  // JSR ($8981,X)，C 侧 RunOneFrameOfGameInner 的 switch 分派与之等价）。
+  // 破坏为 81 89。故仅当 F710 处为原版空白(0xFF)时才打这两个 patch；汉化 ROM 跳过（模拟器侧跑
+  // 原版 JSR ($8981,X)，C 侧 RunOneFrameOfGameInner 的 switch 分派与之等价）。
   if (g_rom[0x17710] == 0xFF) {
     { uint8 t[3] = { 0x20, 0x0f, 0xf7 }; PatchBytes(0x82896b, t, 3); }
     { uint8 t[3] = { 0x7c, 0x81, 0x89 }; PatchBytes(0x82F70F, t, 3); }
   }
+
+  // Fix so main code is in a function：上游把 16 字节主循环 stub 装在 $82:F713，其尾 4C 13 F7 会
+  // 落进 F720-F722、且 8944 的 JMP 目标 F713 落在 CHS 跳转表 F710[1] 区——直接装会破坏汉化 ROM
+  // 的跳转表与标签表。两 ROM 的 $82:F8B6+ 均为 FF 空白，故把 stub 整体重定位到 $82:F8B6
+  // （自环 JMP 目标同步改 F8B6），8944 的 JMP 目标同步改 F8B6；LoadSnesState 的加载重定向常量
+  // 同步为 0xF8BD（=stub+7，见 sm_rtl.c）。原版/汉化一律安装，保持上游主循环结构。
+  { uint8 t[] = { 0xc2, 0x30, 0x22, 0x59, 0x94, 0x80, 0x20, 0x48, 0x89, 0x22, 0x38, 0x83, 0x80, 0x4C, 0xB6, 0xF8 }; PatchBytes(0x82f8b6, t, sizeof(t)); }
+  { uint8 t[] = { 0x58, 0x4c, 0xb6, 0xf8 }; PatchBytes(0x828944, t, sizeof(t)); }
+  { uint8 t[] = { 0x28, 0x60 }; PatchBytes(0x82897a, t, sizeof(t)); }
 
   // Some code called by GameState_37_CeresGoesBoomWithSamus_ forgets to clear the M flag
   { uint8 t[] = { 0x5f, 0xf7 }; PatchBytes(0x8BA362, t, sizeof(t)); }
@@ -749,11 +758,6 @@ Snes *SnesInit(const char *filename) {
   // EprojColl_8676 doesn't initialize Y
   { uint8 t[] = { 0xac, 0x91, 0x19, 0x4c, 0x76, 0x86 }; PatchBytes(0x86f4a6, t, sizeof(t)); }
   { uint8 t[] = { 0xa6, 0xf4 }; PatchBytes(0x8685bd, t, sizeof(t)); }
-
-  // Fix so main code is in a function.
-  { uint8 t[] = { 0xc2, 0x30, 0x22, 0x59, 0x94, 0x80, 0x20, 0x48, 0x89, 0x22, 0x38, 0x83, 0x80, 0x4C, 0x13, 0xF7 }; PatchBytes(0x82f713, t, sizeof(t)); }
-  { uint8 t[] = { 0x58, 0x4c, 0x13, 0xf7 }; PatchBytes(0x828944, t, sizeof(t)); }
-  { uint8 t[] = { 0x28, 0x60 }; PatchBytes(0x82897a, t, sizeof(t)); }
 
   // Remove IO_HVBJOY loop in ReadJoypadInput
   { uint8 t[] = { 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0x80945C, t, sizeof(t)); }

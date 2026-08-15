@@ -66,9 +66,25 @@ static void LoadSnesState(SaveLoadFunc *func, void *ctx) {
 
   g_snes->cpu->e = false;
   uint32 next = (g_snes->ram[g_snes->cpu->sp + 3] | g_snes->ram[g_snes->cpu->sp + 4] << 8 | g_snes->ram[g_snes->cpu->sp + 5] << 16) + 1;
+  // 原版 sm 把"栈上返回点=0x82897D"的加载状态重定向到主循环 stub（Fix so main code is in a
+  // function）。CHS/CHT 下该 stub 已重定位到 $82:F8B6（见 sm_cpu_infra.c），故目标常量同步为
+  // 0xF8BD（=stub+7，原值为 0xF71A=F713+7）；两 ROM 均安装 stub，此重定向无条件执行。
   if (next == 0x82897e) {
-    g_snes->ram[g_snes->cpu->sp + 3] = (0xF71B - 1) & 0xff;
-    g_snes->ram[g_snes->cpu->sp + 4] = (0xF71B - 1) >> 8;
+    g_snes->ram[g_snes->cpu->sp + 3] = (0xF8BE - 1) & 0xff;
+    g_snes->ram[g_snes->cpu->sp + 4] = (0xF8BE - 1) >> 8;
+  }
+  // stub 重定位前（F713 时代）保存的快照，栈上可能残留指向旧 stub 的返回地址
+  // （JSL $809459→F718、JSR $8948→F71B、JSL $808338→F71F，bank 字节 0x82）。
+  // 加载后 RTL/RTS 弹回旧地址会执行 CHS 跳转表/标签表数据（帧历史 0x82F720 → RTI →
+  // cart_readLorom 崩溃）。按偏移平移改写为新 stub(F8B6) 的等价返回地址：RTL 落点
+  // = 新 stub 的 JMP 自环指令，与原流程完全等价。
+  for (uint32 a = (uint32)(g_snes->cpu->sp + 1); a + 2 < 0x2000; a += 2) {
+    uint16 v = g_snes->ram[a] | g_snes->ram[a + 1] << 8;
+    if (g_snes->ram[a + 2] == 0x82 && v >= 0xF713 && v <= 0xF722) {
+      v = 0xF8B6 + (v - 0xF713);
+      g_snes->ram[a] = v & 0xff;
+      g_snes->ram[a + 1] = v >> 8;
+    }
   }
   RtlSynchronizeWholeState();
 }
