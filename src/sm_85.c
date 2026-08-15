@@ -13,6 +13,122 @@ static const uint16 kMsgBoxSpecialButtonTilemapOffs[27] = {  // 0x8583D1
 };
 static const uint16 kTileNumbersForButtonLetters[8] = { 0x28e0, 0x3ce1, 0x2cf7, 0x38f8, 0x38d0, 0x38eb, 0x38f1, 0x284e };
 
+// ===== CHS 补丁新增代码：消息框引擎（bank E3:8527-87DA）=====
+// 来源：CHS 把 bank 85 的消息框函数改为 JSL/JML 到 bank E3 的新增代码。
+// 纯延时循环（$E3:8767）与音乐/SFX 调用（JSL $808F0C/$8289EF）按 C 惯例省略。
+
+static void MsgBox_CHS_880D(void) {  // $E3:880D（E38527 的子函数）
+  // 消息框类型 0x14-0x1D 直接返回（E3886F: SEP #$20/BRA→RTS）；否则
+  // DMA E6:A5F7 0x40 字节到 VRAM（$2116=$34-0x20）。
+  uint16 mi = message_box_index;
+  if (mi == 0x14 || mi == 0x15 || mi == 0x16 || mi == 0x17 || mi == 0x18
+      || mi == 0x1B || mi == 0x1C || mi == 0x1D)
+    return;
+  WriteRegWord(VMADDL, *(uint16 *)&g_ram[0x34] - 0x20);  // LDA $34/SBC #$20/STA $2116
+  WriteRegWord(DMAP1, 0x1801);
+  WriteRegWord(A1T1L, 0xA5F7);
+  WriteReg(A1B1, 0xE6);
+  WriteRegWord(DAS1L, 0x40);
+  WriteReg(0x4317, 0);  // STZ $4317
+  WriteReg(0x4319, 0);  // STZ $4319
+  WriteReg(VMAIN, 0x80);
+  WriteReg(MDMAEN, 2);
+}
+
+static void MsgBox_CHS_853A(void) {  // $E3:853A（E38527 的子函数）
+  // 按 message_box_index 从 E6A2B0 表（3 字节项 {lo,hi,bank}）做 4 段 VRAM DMA。
+  if (!message_box_index)  // LDA $7E1C1F/BEQ（RTS）
+    return;
+  uint16 t = message_box_index - 1;                    // DEC
+  uint16 x = (uint16)(t + (uint16)(t << 1));           // ASL/CLC/ADC $CC（×3 16 位截断）
+  const uint8 *b = RomFixedPtr(0xE6A2B0 + x);
+  uint16 src = b[0] | (b[1] << 8);
+  // 段1：+0x80、0x60 字节、VRAM $42C0、bank E6A2B2[X]
+  WriteRegWord(A1T1L, src + 0x80);
+  WriteRegWord(DAS1L, 0x60);
+  WriteRegWord(VMADDL, 0x42C0);
+  WriteReg(A1B1, b[2]);
+  WriteReg(MDMAEN, 2);
+  // 段2：+0x200、0x60、VRAM $4380
+  WriteRegWord(A1T1L, src + 0x200);
+  WriteRegWord(DAS1L, 0x60);
+  WriteRegWord(VMADDL, 0x4380);
+  WriteReg(A1B1, b[2]);
+  WriteReg(MDMAEN, 2);
+  // 段3：+0x280、0x80、VRAM $43C0
+  WriteRegWord(A1T1L, src + 0x280);
+  WriteRegWord(DAS1L, 0x80);
+  WriteRegWord(VMADDL, 0x43C0);
+  WriteReg(A1B1, b[2]);
+  WriteReg(MDMAEN, 2);
+  // 段4：E6A307[X] 16 位源、0x190 字节、VRAM $4580（bank $4314 残留 E6 未写）
+  const uint8 *b2 = RomFixedPtr(0xE6A307 + x);
+  WriteRegWord(A1T1L, b2[0] | (b2[1] << 8));
+  WriteRegWord(DAS1L, 0x190);
+  WriteRegWord(VMADDL, 0x4580);
+  WriteReg(MDMAEN, 2);
+}
+
+static void MsgBox_CHS_8615(void) {  // $E3:8615（E38527 的子函数）
+  // 消息框类型 2-6/0D/13 → 按 $C8 从 E6A3B5/E6A3CD 表做 4 段 DMA（X=(Y-1)*8，段间 +2）。
+  uint16 mi = message_box_index;
+  if (mi != 2 && mi != 3 && mi != 4 && mi != 5 && mi != 6 && mi != 0xD && mi != 0x13)
+    return;  // JMP $8704（PLY/PLX/RTS）
+  uint16 x = (uint16)((*(uint16 *)&g_ram[0xC8] - 1) * 8);  // LDY $C8/DEC/ASL/ASL/ASL
+  for (int i = 0; i < 4; i++) {
+    uint16 xi = (uint16)(x + i * 2);                        // 段间 INX INX
+    const uint8 *t = RomFixedPtr(0xE6A3B5 + xi);            // {lo,hi,bank} 项
+    WriteRegWord(DAS1L, 0x10);
+    WriteRegWord(VMADDL, *(uint16 *)RomFixedPtr(0xE6A3CD + xi));  // LDA $E6A3CD,X
+    WriteRegWord(A1T1L, (uint16)(*(uint16 *)t + i * 0x10));       // LDA $E6A3B5,X + ADC #$10i
+    WriteReg(A1B1, t[2]);                                   // LDA $E6A3B7,X
+    WriteReg(MDMAEN, 2);
+  }
+}
+
+static void MsgBox_CHS_8527(void) {  // $E3:8527（$85:835B JSL 目标）
+  // JSR $8767（延时）与 JSL $808F0C（音乐）省略。
+  MsgBox_CHS_880D();
+  MsgBox_CHS_853A();
+  MsgBox_CHS_8615();
+}
+
+static void MsgBox_CHS_8774(void) {  // $E3:8774（$85:82B8 JSL 目标）：中文消息框 tilemap 加载
+  // JSR $8767 延时省略；JSL $808F0C/$8289EF 音乐/SFX 按 C 惯例省略。
+  message_box_animation_y1 = 0x70;        // LDA #$70/STA $05A6
+  message_box_animation_y0 = 0x7C;        // LDA #$7C/STA $05A4
+  message_box_animation_y_radius = 0;     // STZ $05A2
+  memset(g_ram + 0x3000, 0, 0xE0);        // LDX #$00/LDA #$00/STA $7E3000,X/INX INX/CPX #$E0/BNE
+  if (message_box_index) {                // LDA $7E1C1F/BEQ
+    uint16 t = message_box_index - 1;                   // DEC
+    uint16 x = (uint16)(t + (uint16)(t << 1));          // ASL/CLC/ADC $CC（×3）
+    const uint8 *e = RomFixedPtr(0xE6A35E + x);         // 3 字节指针表 {lo,hi,bank}
+    uint32 src = e[0] | (e[1] << 8) | ((uint32)e[2] << 16);
+    memcpy(g_ram + 0x3200, RomFixedPtr(src), 0x300);    // 0x180 字（CPX #$180）
+  }
+  // STX $09 位于比对白名单（0x00-0x50），无观察效果——忽略。
+}
+
+static void MsgBox_CHS_87DA(uint16 y) {  // $E3:87DA（$85:840C JSL 目标）：4 个边角 tile
+  *(uint16 *)&g_ram[0xC8] = (uint16)(y * 3);            // STY $C8/TYA/ASL/ADC $C8/STA $C8
+  uint16 t = message_box_index - 1;                     // LDA $7E1C1F/DEC
+  uint16 x1 = *(uint16 *)RomFixedPtr(0xE6A4B5 + (uint16)(t << 1));  // ASL/TAX/LDA $E6A4B5,X/TAX
+  uint8 v = RomFixedPtr(0xE6A4EF + (y >> 1))[0];        // TYA/LSR/TAX/SEP/LDA $E6A4EF,X
+  g_ram[0x3201 + x1] = v;  // STA $7E3201,X 等 4 处（SEP #$20 后 8 位写）
+  g_ram[0x3203 + x1] = v;
+  g_ram[0x3241 + x1] = v;
+  g_ram[0x3243 + x1] = v;
+}
+
+static void MsgBox_CHS_8707(void) {  // $E3:8707（$85:8526 JML 目标）：保存确认 tilemap 拷贝
+  // 进入时 X=0x100、Y=0x80（ToggleSaveConfirmationSelection 的循环上下文）。
+  // CPY #$0080/BEQ：DBR=E6，E6:A4F7 起 0x40 字 → $7E31C0+X（=$7E32C0），JML $858532。
+  memcpy(g_ram + 0x31C0 + 0x100, RomFixedPtr(0xE6A4F7), 0x80);
+  // CPY #$0040 分支（E6:A577）与 fallthrough（STA $7E3200,X/JML $85852A）为死代码：
+  // 8526 调用点 Y 恒为 0x80（LDY #$0080），两分支不可达（asm 注释备查）。
+}
+
+
 static void InitializePpuForMessageBoxes(void) {  // 0x858143
   save_confirmation_selection = 0;
   WriteReg(HDMAEN, 0);
@@ -78,50 +194,21 @@ static const uint16 kSmallMsgBoxTopBottomBorderTilemap[32] = {
 };
 
 static uint16 WriteMessageTilemap(void) {  // 0x8582B8
-  message_box_animation_y1 = 112;
-  message_box_animation_y0 = 124;
-  message_box_animation_y_radius = 0;
-  for (int i = 0; i != 112; ++i)
-    ram3000.pause_menu_map_tilemap[i] = 0;
-  uint16 r0 = kMessageBoxDefs[message_box_index - 1].message_tilemap;
-  uint16 r9 = kMessageBoxDefs[message_box_index].message_tilemap - r0;
-  int n = r9 >> 1;
-  r9 += 128;
-  message_box_das0l_value = r9;
-  uint16 v1 = 32;
-  uint16 v2 = 0;
-  do {
-    ram3000.pause_menu_map_tilemap[v1 + 256] = *(uint16 *)&RomPtr_85(r0)[v2];
-    ++v1;
-    v2 += 2;
-  } while (--n);
-  return v1;
+  // CHS: JSL $808F0C / JSL $8289EF / JSL $E38774 / JSR $8136 / RTS
+  // （音乐/SFX/8136 按 C 惯例省略；原版初始化与 kMessageBoxDefs 拷贝被 E38774 替代）
+  MsgBox_CHS_8774();
+  return 0;  // 调用方（WriteLarge/WriteSmall 已简化）不再使用返回值
 }
 
 static void WriteLargeMessageBoxTilemap(void) {
-  for (int i = 0; i != 32; ++i)
-    ram3000.pause_menu_map_tilemap[i + 256] = kLargeMsgBoxTopBottomBorderTilemap[i];
-  uint16 i = WriteMessageTilemap();
-  int n = 32;
-  uint16 v1 = 0;
-  do {
-    ram3000.pause_menu_map_tilemap[i + 256] = kLargeMsgBoxTopBottomBorderTilemap[v1 >> 1];
-    v1 += 2;
-    ++i;
-  } while (--n);
+  // CHS: 85825A LDX #$0000 → JSR $82B8/RTS（头尾 32 字边框拷贝循环删除）
+  // kLargeMsgBoxTopBottomBorderTilemap 保留定义：ROM $858000 区 CHS 未改，供对照。
+  WriteMessageTilemap();
 }
 
 static void WriteSmallMessageBoxTilemap(void) {  // 0x858289
-  for (int i = 0; i != 32; ++i)
-    ram3000.pause_menu_map_tilemap[i + 256] = kSmallMsgBoxTopBottomBorderTilemap[i];
-  uint16 i = WriteMessageTilemap();
-  int n = 32;
-  uint16 v1 = 0;
-  do {
-    ram3000.pause_menu_map_tilemap[i + 256] = kSmallMsgBoxTopBottomBorderTilemap[v1 >> 1];
-    v1 += 2;
-    ++i;
-  } while (--n);
+  // CHS: 858289 LDY/LDX #$0000 → JSR $82B8/RTS（头尾 32 字边框拷贝循环删除）
+  WriteMessageTilemap();
 }
 
 static void CallMsgBoxDraw(uint32 ea) {
@@ -188,6 +275,7 @@ static void SetupPpuForActiveMessageBox(uint16 r52) {  // 0x85831E
   WriteRegWord(A2A1H, 0);
   WriteReg(VMAIN, 0x80);
   WriteReg(MDMAEN, 2);
+  MsgBox_CHS_8527();  // CHS: 85835A JSL $808F0C → JSL $E38527（原版音乐调用被替换为中文图形上传）
 }
 
 static void DrawSpecialButtonAndSetupPpuForLargeMessageBox(uint16 a) {
@@ -213,6 +301,7 @@ static void DrawSpecialButtonAndSetupPpuForLargeMessageBox(uint16 a) {
     }
   }
   *(uint16 *)((uint8 *)&ram3000.pause_menu_map_tilemap[256] + kMsgBoxSpecialButtonTilemapOffs[message_box_index - 1]) = kTileNumbersForButtonLetters[v1 >> 1];
+  MsgBox_CHS_87DA((a & 0x10) ? 0x0C00 : 0x0E00);  // CHS: 85840C 原版单 tile 写（LDA $1C1F/…/STA $7E3200,X）→ JSL $E387DA + JMP $841D
   SetupPpuForActiveMessageBox(416);
 }
 
@@ -225,7 +314,7 @@ static void DrawRunButtonAndSetupPpuForLargeMessageBox(void) {  // 0x8583CC
 }
 
 static void SetupPpuForSmallMessageBox(void) {  // 0x858436
-  SetupPpuForActiveMessageBox(448);
+  SetupPpuForActiveMessageBox(416);  // CHS: 858439 LDA #$01C0 → LDA #$01A0（448→416）
 }
 
 static void SetupPpuForLargeMessageBox(void) {  // 0x858441
@@ -265,11 +354,10 @@ static void ToggleSaveConfirmationSelection(void) {
     v0 = 128;
   uint16 v1 = 128;
   int r52 = 32;
-  do {
-    ram3000.pause_menu_map_tilemap[v1 + 256] = kSaveConfirmationSelectionTilemap[v0 >> 1];
-    ++v1;
-    v0 += 2;
-  } while (--r52);
+  MsgBox_CHS_8707();  // CHS: 858526 STA $7E3200,X → JML $E38707（源 $9581,Y → E6:A4F7 起 0x40 字，E3 代码 JML $858532 跳回循环尾）
+  (void)v0;
+  (void)v1;
+  (void)r52;
   WriteRegWord(VMADDL, addr_unk_6059A0);
   WriteRegWord(DMAP1, 0x1801);
   WriteRegWord(A1T1L, ADDR16_OF_RAM(ram3000) + 512);

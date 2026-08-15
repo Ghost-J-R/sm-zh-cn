@@ -78,7 +78,7 @@
 
 1. **bank 80 复位钩子**：**已完成**（$E3:8000 全套翻译 + 对照实验零偏差）。B6ED-B6F3 散点待判定（疑似指针表低字节，B/C 类）；8693 透明（D 类）；
 2. **bank 8B 片**：8D23→E38873 **已完成**（Func20 机制全套）。**已移植（2026-08-15）**：5 处解压源散点（Func54/BlackoutFromCeres 96D10A→E78080、Func86 96EC76→E79CC0、EscapeFromCeres/Func126 97E7DE→E6EFB5，字节对照实证；运行时验证待过场可达）；9295/9BCA（logo/标题解压源 80D8→C8F0，CHT 为 C8F4）；8BCCD7 判定 C 类（cinematic 指令流经 RomPtr_8B 读取自动生效）；**A3FF→E388CB 已移植**（Intro_Initial 解压2 替换为 ResetHookFill7F8000_88CB 填 $7F8000 起 0x900 字节 FF00，解压3 保留）；**A48C/A490 已移植**（unk_8BA489 DMA 源 7F8000→E6E255、0x900→0xD00 字节）；**A0E3/A0E9 判定：数据表改动（HDMA 链 0x8103→0xF480）、无 C 消费者、25 秒 boot 零差异实证——不改代码，运行时验证待标题交互阶段**。**已知待办**：9295/9BCA 修复后帧 0/151 出现"解压时机错位"差异（theirs=0——模拟器侧该帧未解压、C 侧一帧内推进多帧逻辑；钩子禁用实验证明与钩子无关），需在后续增量中调查 sm 帧对齐机制。bank 8B 全部项已处理完毕。
-3. **bank 85 片**：8289/82B8 消息框函数、840C→E387DA、8526→E38707、825A 边框数组（B 类）——覆盖道具提示框（boot 后第一类 UI）；
+3. **bank 85 片**：**已完成（2026-08-15）**：825A/8289（WriteLarge/WriteSmall 头尾边框拷贝删除→只调 WriteMessageTilemap；**triage 原判 825A 为 B 类数组有误——实为 A 类函数头代码，kLargeMsgBoxTopBottomBorderTilemap 数组在 ROM $858000 区且 CHS 未改**）；82B8（WriteMessageTilemap→MsgBox_CHS_8774：中文 tilemap 经 E6A35E 3 字节指针表加载）；835B（SetupPpuForActiveMessageBox 尾部→MsgBox_CHS_8527：880D/853A/8615 三段 E6 表 VRAM DMA）；840C（DrawSpecialButton→MsgBox_CHS_87DA 四边角 tile）；8439（小消息框参数 448→416）；8526（ToggleSaveConfirmationSelection 源→E6:A4F7）；93CF-94A7 判定：tilemap 数据表无 C 消费者（文档化，运行时验证待消息框交互）。验证：diag_85 与基线 6,282 行零差异（消息框路径 boot 不可达）。**E3:8707 死分支（CPY #$0040/fallthrough）未翻译**（8526 调用点 Y 恒 0x80，注释备查）。
 4. **bank 81 片**：8DFE（LoadInitialMenuTiles）、C5xx-EDxx 六组 tilemap（B/C 类确认后处理）；
 5. **bank 82 片**：91xx/93xx/96xx/ABxx/ACxx/B1xx/ECxx 各函数 + F710-F8B5 新块（含 E39290/E392DE 目标）——暂停/地图/装备/选项菜单（需交互验证）；
 6. **bank 86/8D**：CB0F 2B、B8E5 spritemap（C 类）。
