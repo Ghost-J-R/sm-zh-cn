@@ -77,7 +77,7 @@
 ## 4. 移植顺序（按 boot 路径可达性 + 风险）
 
 1. **bank 80 复位钩子**：**已完成**（$E3:8000 全套翻译 + 对照实验零偏差）。B6ED-B6F3 散点待判定（疑似指针表低字节，B/C 类）；8693 透明（D 类）；
-2. **bank 8B 片**：8D23→E38873 **已完成**（Func20 机制全套）。**已移植（2026-08-15）**：5 处解压源散点（Func54/BlackoutFromCeres 96D10A→E78080、Func86 96EC76→E79CC0、EscapeFromCeres/Func126 97E7DE→E6EFB5，字节对照实证；运行时验证待过场可达）；9295/9BCA（logo/标题解压源 80D8→C8F0，CHT 为 C8F4）；8BCCD7 判定 C 类（cinematic 指令流经 RomPtr_8B 读取自动生效）。**已知待办**：9295/9BCA 修复后帧 0/151 出现"解压时机错位"差异（theirs=0——模拟器侧该帧未解压、C 侧一帧内推进多帧逻辑；钩子禁用实验证明与钩子无关），需在后续增量中调查 sm 帧对齐机制。剩余：A3FF→E388CB、A0E3/A0E9、A48C/A490（Intro_Initial 的 DMA 源 7F8000→E6E255 已确认、HDMA 表 8103→F480 已确认）；
+2. **bank 8B 片**：8D23→E38873 **已完成**（Func20 机制全套）。**已移植（2026-08-15）**：5 处解压源散点（Func54/BlackoutFromCeres 96D10A→E78080、Func86 96EC76→E79CC0、EscapeFromCeres/Func126 97E7DE→E6EFB5，字节对照实证；运行时验证待过场可达）；9295/9BCA（logo/标题解压源 80D8→C8F0，CHT 为 C8F4）；8BCCD7 判定 C 类（cinematic 指令流经 RomPtr_8B 读取自动生效）；**A3FF→E388CB 已移植**（Intro_Initial 解压2 替换为 ResetHookFill7F8000_88CB 填 $7F8000 起 0x900 字节 FF00，解压3 保留）；**A48C/A490 已移植**（unk_8BA489 DMA 源 7F8000→E6E255、0x900→0xD00 字节）；**A0E3/A0E9 判定：数据表改动（HDMA 链 0x8103→0xF480）、无 C 消费者、25 秒 boot 零差异实证——不改代码，运行时验证待标题交互阶段**。**已知待办**：9295/9BCA 修复后帧 0/151 出现"解压时机错位"差异（theirs=0——模拟器侧该帧未解压、C 侧一帧内推进多帧逻辑；钩子禁用实验证明与钩子无关），需在后续增量中调查 sm 帧对齐机制。bank 8B 全部项已处理完毕。
 3. **bank 85 片**：8289/82B8 消息框函数、840C→E387DA、8526→E38707、825A 边框数组（B 类）——覆盖道具提示框（boot 后第一类 UI）；
 4. **bank 81 片**：8DFE（LoadInitialMenuTiles）、C5xx-EDxx 六组 tilemap（B/C 类确认后处理）；
 5. **bank 82 片**：91xx/93xx/96xx/ABxx/ACxx/B1xx/ECxx 各函数 + F710-F8B5 新块（含 E39290/E392DE 目标）——暂停/地图/装备/选项菜单（需交互验证）；

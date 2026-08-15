@@ -291,6 +291,13 @@ void ResetHook_CHS(void) {  // $E3:8000 主体（CHS 补丁复位钩子）
   // JML $808423 —— 返回后由 Vector_RESET_Async 继续
 }
 
+void ResetHookFill7F8000_88CB(void) {  // $E3:88CB - PHX/LDA #$FF00/TAX/STA $7F8000,X/INX INX/CPX #$900/BNE/PLX/RTL
+  // CHS: 被 $8B:A3FF 的 JSL 调用——把 $7F:8000 起 0x900 字节填 0xFF00
+  // （X 从 0 步进 2 到 0x900，共 0x480 次 16 位写），替代原版的解压2（0x95D089）。
+  for (uint16 *p = (uint16 *)&g_ram[0x18000]; p < (uint16 *)&g_ram[0x18900]; p++)
+    *p = 0xFF00;
+}
+
 CoroutineRet Vector_RESET_Async(void) {  // 0x80841C
   COROUTINE_BEGIN(coroutine_state_0, 1)
   ResetHook_CHS();  // CHS: $80:841F JML $E38000（原版为 JML $808423 直接初始化）；soft reset 走 COROUTINE_MANUAL_POS(3)，不经过此处

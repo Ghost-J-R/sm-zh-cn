@@ -2120,7 +2120,7 @@ void CinematicFunction_Intro_Initial(void) {  // 0x8BA395
     v1 += 2;
   } while ((int16)(v1 - 512) < 0);
   DecompressToMem(0x95f90e, g_ram + 0x10000);
-  DecompressToMem(0x95d089, g_ram + 0x18000);
+  ResetHookFill7F8000_88CB();  // CHS: 8BA3FF JSL $E388CB + JMP $A410（原解压2 0x95D089→$7F:8000 被替换；解压3 保留）
   DecompressToMem(0x9788cc, g_ram + 0x19000);
   DecompressToMem(0x96ff14, g_ram + 0x19800);
   DecompressToMem(0x95e4c2, g_ram + 0x1b800);
@@ -2134,7 +2134,7 @@ void CinematicFunction_Intro_Initial(void) {  // 0x8BA395
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0x40);
   WriteReg(VMAIN, 0x80);
-  static const StartDmaCopy unk_8BA489 = { 1, 1, 0x18, LONGPTR(0x7f8000), 0x0900 };
+  static const StartDmaCopy unk_8BA489 = { 1, 1, 0x18, LONGPTR(0xe6e255), 0x0D00 };  // CHS: 8BA48C 01 01 18 00 80 7F 00 09 → 01 01 18 55 E2 E6 00 0D（源 7F8000→E6E255、0x900→0xD00 字节）
   SetupDmaTransfer(&unk_8BA489);
   WriteReg(MDMAEN, 2);
   WriteReg(VMADDL, 0);

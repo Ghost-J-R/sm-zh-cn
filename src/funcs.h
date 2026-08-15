@@ -137,6 +137,7 @@ void SetElevatorsAsUsed(void);
 void SetEventHappened(uint16 a);
 void SetTimerMinutes(uint16 a);
 void SetupDmaTransfer(const void* p);
+void ResetHookFill7F8000_88CB(void);
 CoroutineRet StartGameplay_Async(void);
 void ToggleHudItemHighlight(uint16 a, uint16 k);
 void UpdateBackgroundDataRow(void);
