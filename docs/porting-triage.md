@@ -79,7 +79,7 @@
 1. **bank 80 复位钩子**：**已完成**（$E3:8000 全套翻译 + 对照实验零偏差）。B6ED-B6F3 散点待判定（疑似指针表低字节，B/C 类）；8693 透明（D 类）；
 2. **bank 8B 片**：8D23→E38873 **已完成**（Func20 机制全套）。**已移植（2026-08-15）**：5 处解压源散点（Func54/BlackoutFromCeres 96D10A→E78080、Func86 96EC76→E79CC0、EscapeFromCeres/Func126 97E7DE→E6EFB5，字节对照实证；运行时验证待过场可达）；9295/9BCA（logo/标题解压源 80D8→C8F0，CHT 为 C8F4）；8BCCD7 判定 C 类（cinematic 指令流经 RomPtr_8B 读取自动生效）；**A3FF→E388CB 已移植**（Intro_Initial 解压2 替换为 ResetHookFill7F8000_88CB 填 $7F8000 起 0x900 字节 FF00，解压3 保留）；**A48C/A490 已移植**（unk_8BA489 DMA 源 7F8000→E6E255、0x900→0xD00 字节）；**A0E3/A0E9 判定：数据表改动（HDMA 链 0x8103→0xF480）、无 C 消费者、25 秒 boot 零差异实证——不改代码，运行时验证待标题交互阶段**。**已知待办**：9295/9BCA 修复后帧 0/151 出现"解压时机错位"差异（theirs=0——模拟器侧该帧未解压、C 侧一帧内推进多帧逻辑；钩子禁用实验证明与钩子无关），需在后续增量中调查 sm 帧对齐机制。bank 8B 全部项已处理完毕。
 3. **bank 85 片**：**已完成（2026-08-15）**：825A/8289（WriteLarge/WriteSmall 头尾边框拷贝删除→只调 WriteMessageTilemap；**triage 原判 825A 为 B 类数组有误——实为 A 类函数头代码，kLargeMsgBoxTopBottomBorderTilemap 数组在 ROM $858000 区且 CHS 未改**）；82B8（WriteMessageTilemap→MsgBox_CHS_8774：中文 tilemap 经 E6A35E 3 字节指针表加载）；835B（SetupPpuForActiveMessageBox 尾部→MsgBox_CHS_8527：880D/853A/8615 三段 E6 表 VRAM DMA）；840C（DrawSpecialButton→MsgBox_CHS_87DA 四边角 tile）；8439（小消息框参数 448→416）；8526（ToggleSaveConfirmationSelection 源→E6:A4F7）；93CF-94A7 判定：tilemap 数据表无 C 消费者（文档化，运行时验证待消息框交互）。验证：diag_85 与基线 6,282 行零差异（消息框路径 boot 不可达）。**E3:8707 死分支（CPY #$0040/fallthrough）未翻译**（8526 调用点 Y 恒 0x80，注释备查）。
-4. **bank 81 片**：8DFE（LoadInitialMenuTiles）、C5xx-EDxx 六组 tilemap（B/C 类确认后处理）；
+4. **bank 81 片**：**已完成（2026-08-15）**：8DFE-8E0C（LoadInitialMenuTiles 第二组寄存器写被 `JSL $E383DC` 替换，反汇编定界 83DC-8443 RTL：两段 DMA（$B6AE00→VRAM 0x4300 0xE00、$E7C310→VRAM 0x4A00 0x5E0）+ 重建 VMADDL=0/VMADDH=0x30/VMAIN=0x80）→ C 已插入两 DMA 块；A7BD/AAEB（`LDA #$4154→#$4118`，JSL $829628=DrawRoomSelectMapAreaLabel 的指针参数）→ C 两处调用点 +170→+140（sm_81.c FileSelectMap_5/FileSelectMap_7）；B35B-B365（NewSaveFile 内 japanese_text_flag 0→1，CPX $09 为占位）→ C `japanese_text_flag = 1`；C5xx-EDxx 六组 tilemap 判定：**C 类**（grep 全 src 无引用、ida_types.h 常量最大 0xBF1A 不落入差异区、ROM 16 位引用扫描原版/CHS 位置完全一致，数据换 ROM 自动生效），运行时验证待 file select 菜单交互。
 5. **bank 82 片**：91xx/93xx/96xx/ABxx/ACxx/B1xx/ECxx 各函数 + F710-F8B5 新块（含 E39290/E392DE 目标）——暂停/地图/装备/选项菜单（需交互验证）；
 6. **bank 86/8D**：CB0F 2B、B8E5 spritemap（C 类）。
 7. **最终统一验证**：全部完成后 CHS 跑 boot 归零 + 用户手动按 Start 进暂停菜单验证 bank 82 片。
@@ -87,6 +87,8 @@
 > 注意：boot 归零验证必须等第 1-4 步全部完成（失配在首次分歧即触发）；bank 82 的暂停菜单路径需要交互（用户按 Start），或后续用 sm 的 replay 功能自动化。
 
 ## 5. 验证方法沉淀（2026-08-15 复位钩子增量实证）
+
+**失配弹窗四件套（2026-08-15 新增）**：失配时 `SaveBugSnapshot(reason)` 保存 `saves/bug-<时间戳>.sav` 后弹 SDL_ShowSimpleMessageBox（标题 SuperMet，内容含原因+快照文件名+操作提示）；窗口画面保持显示；printf 文本照常进 stdout/stderr（cmd 重定向得 diag.txt）；弹窗前 fflush 保证日志已落盘。**默认弹窗开启**（用户交互验证直观看）；自动比对命令加 `--no-pause` 关闭弹窗防挂起（`sm.exe --no-pause > diag.txt 2>&1`）。节流 = g_got_mismatch_count 5*60 帧一次；--debug 模式不弹。
 
 1. **快照 total_frames/PC 不反映失配点**：SaveBugSnapshot 在 RestoreSnapshot(&g_snapshot_before) 之后调用，快照保存的是帧开始状态（PC=复位向量恒成立）。失配定位必须用 **stderr 差异字节捕获**：`cmd /c "sm.exe > diag.txt 2>&1"`（DSH 沙箱禁止命名管道，PowerShell `-RedirectStandard*` 与 `|` 捕获均不可用，必须走 cmd 文件句柄重定向），读 `@N: Memory compare failed` 块的差异地址列表（每帧最多 256 字节，按 RAM 地址升序）。
 2. **增量零回归标准**：目标增量移植后，"钩子版 diag" 与 "基线版 diag"（git stash 回退该增量）逐行对比零差异 = 该增量未引入任何新失配（差异可能仍存在，但全部来自其他未移植点）。

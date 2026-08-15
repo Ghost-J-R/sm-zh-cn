@@ -54,6 +54,7 @@ static uint8_t g_pixels[256 * 4 * 240];
 static uint8_t g_my_pixels[256 * 4 * 240];
 
 int g_got_mismatch_count;
+bool g_pause_on_mismatch = true;
 
 
 enum {
@@ -326,6 +327,11 @@ int main(int argc, char** argv) {
   }
   if (argc >= 1 && strcmp(argv[0], "--debug") == 0) {
     g_debug_flag = true;
+    argc -= 1, argv += 1;
+  }
+  if (argc >= 1 && strcmp(argv[0], "--no-pause") == 0) {
+    // 失配时只打印+保存快照，不弹阻塞式消息框（自动化逐帧比对用）
+    g_pause_on_mismatch = false;
     argc -= 1, argv += 1;
   }
   ParseConfigFile(config_file);

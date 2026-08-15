@@ -10,6 +10,7 @@
 #include "util.h"
 #include "enemy_types.h"
 #include <time.h>
+#include <SDL.h>
 
 void RtlRunFrameCompare(uint16 input, int run_what);
 
@@ -17,6 +18,7 @@ enum RunMode { RM_BOTH, RM_MINE, RM_THEIRS };
 uint8 g_runmode = RM_BOTH;
 
 extern int g_got_mismatch_count;
+extern bool g_pause_on_mismatch;
 
 Snes *g_snes;
 Cpu *g_cpu;
@@ -954,11 +956,23 @@ void DrawFrameToPpu(void) {
   g_snes->cpu->nmiWanted = false;
 }
 
-void SaveBugSnapshot() {
+void SaveBugSnapshot(const char *reason) {
   if (!g_debug_flag && g_got_mismatch_count == 0) {
     char buffer[64];
     snprintf(buffer, sizeof(buffer), "saves/bug-%d.sav", (int)time(NULL));
     RtlSaveSnapshot(buffer, true);
+    if (g_pause_on_mismatch) {
+      // 交互模式：弹窗前冲刷 stdio，保证弹窗挂起/被强杀时日志已落盘。
+      // 自动比对（--no-pause）不执行 flush，保持与基线一致的输出行为。
+      fflush(stdout);
+      fflush(stderr);
+      char msg[256];
+      snprintf(msg, sizeof(msg),
+               "%s\nSnapshot saved to %s\n\n窗口画面保持显示，点“确定”继续运行。\n"
+               "自动比对请加 --no-pause 参数关闭本弹窗。",
+               reason, buffer);
+      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "SuperMet", msg, NULL);
+    }
   }
   g_got_mismatch_count = 5 * 60;
 }
@@ -1000,7 +1014,7 @@ again_theirs:
     if (g_debug_flag)
       goto again_theirs;
 
-    SaveBugSnapshot();
+    SaveBugSnapshot("Verify failure!");
     RunOneFrameOfGame_Emulated();
     goto getout;
   }
@@ -1020,7 +1034,7 @@ getout:
 
   if (menu_index & 0xff00) {
     printf("MENU INDEX TOO BIG!\n");
-    SaveBugSnapshot();
+    SaveBugSnapshot("MENU INDEX TOO BIG!");
     menu_index &= 0xff;
   }
 

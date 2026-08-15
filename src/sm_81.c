@@ -398,6 +398,20 @@ void LoadInitialMenuTiles(void) {  // 0x818DDB
   static const StartDmaCopy unk_818DF1 = { 1, 1, 0x18, LONGPTR(0x8e8000), 0x5600 };
   SetupDmaTransfer(&unk_818DF1);
   WriteReg(MDMAEN, 2);
+  // CHS: JSL $E383DC（原版此处第二组寄存器写被补丁跳板替换，钩子内做两段 DMA 后
+  // 重建 VMADDL=0/VMADDH=0x30/VMAIN=0x80，再 JMP $8E0D 回到 unk_818E11 的 DMA）
+  static const StartDmaCopy unk_E383DC_1 = { 1, 1, 0x18, LONGPTR(0xb6ae00), 0x0e00 };
+  SetupDmaTransfer(&unk_E383DC_1);
+  WriteReg(VMADDL, 0);
+  WriteReg(VMADDH, 0x43);
+  WriteReg(VMAIN, 0x80);
+  WriteReg(MDMAEN, 2);
+  static const StartDmaCopy unk_E383DC_2 = { 1, 1, 0x18, LONGPTR(0xe7c310), 0x05e0 };
+  SetupDmaTransfer(&unk_E383DC_2);
+  WriteReg(VMADDL, 0);
+  WriteReg(VMADDH, 0x4A);
+  WriteReg(VMAIN, 0x80);
+  WriteReg(MDMAEN, 2);
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0x30);
   WriteReg(VMAIN, 0x80);
@@ -1869,7 +1883,7 @@ void FileSelectMap_5_ExpandingSquare(void) {  // 0x81A725
     do
       ram4000.xray_tilemaps[v1++] = 10241;
     while ((int16)(v1 * 2 - 2048) < 0);
-    DrawRoomSelectMapAreaLabel(ram4000.bg2_room_select_map_tilemap + 170);
+    DrawRoomSelectMapAreaLabel(ram4000.bg2_room_select_map_tilemap + 140);  // CHS: $7E4118（原版 $7E4154）
     uint16 v2 = 320;
     uint16 v3 = 959;
     do {
@@ -2086,7 +2100,7 @@ void FileSelectMap_7_PrepExpandSquareTransToRoomMap(void) {  // 0x81AAAC
   reg_BG12NBA = 48;
   hdma_window_1_left_pos[3].field_0 = 0;
   hdma_window_1_right_pos[3].field_0 = 0;
-  DrawRoomSelectMapAreaLabel(ram4000.bg2_room_select_map_tilemap + 170);
+  DrawRoomSelectMapAreaLabel(ram4000.bg2_room_select_map_tilemap + 140);  // CHS: $7E4118（原版 $7E4154）
   uint16 v0 = vram_write_queue_tail;
   VramWriteEntry *v1 = gVramWriteEntry(vram_write_queue_tail);
   v1->size = 512;
@@ -2465,7 +2479,7 @@ void NewSaveFile(void) {  // 0x81B2CB
   game_time_seconds = 0;
   game_time_minutes = 0;
   game_time_hours = 0;
-  japanese_text_flag = 0;
+  japanese_text_flag = 1;  // CHS: STA $09E2（原版 STZ $09E2）——汉化版置位走中文文本分支
   moonwalk_flag = 0;
   hud_auto_cancel_flag = 0;
   debug_flag = 1;
