@@ -727,8 +727,14 @@ Snes *SnesInit(const char *filename) {
   coroutine_state_0 = 1;
 
 #if 1
-  { uint8 t[3] = { 0x20, 0x0f, 0xf7 }; PatchBytes(0x82896b, t, 3); }
-  { uint8 t[3] = { 0x7c, 0x81, 0x89 }; PatchBytes(0x82F70F, t, 3); }
+  // 以下两处 patch 是原版 sm 对 $82:896B "JSR ($8981,X)" 的等价重写（JSR $F70F → JMP ($8981,X)）。
+  // CHS/CHT 汉化补丁把 $82:F710 起改为 8 项指针跳转表（F730/F750/...），无条件 patch 会把表第一项
+  // 破坏为 81 89。故仅当 F710 处为原版空白(0xFF)时才打 patch；汉化 ROM 跳过（模拟器侧跑原版
+  // JSR ($8981,X)，C 侧 RunOneFrameOfGameInner 的 switch 分派与之等价）。
+  if (g_rom[0x17710] == 0xFF) {
+    { uint8 t[3] = { 0x20, 0x0f, 0xf7 }; PatchBytes(0x82896b, t, 3); }
+    { uint8 t[3] = { 0x7c, 0x81, 0x89 }; PatchBytes(0x82F70F, t, 3); }
+  }
 
   // Some code called by GameState_37_CeresGoesBoomWithSamus_ forgets to clear the M flag
   { uint8 t[] = { 0x5f, 0xf7 }; PatchBytes(0x8BA362, t, sizeof(t)); }

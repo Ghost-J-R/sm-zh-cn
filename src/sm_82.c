@@ -1316,13 +1316,9 @@ void MainPauseRoutine(void) {
 }
 
 void PauseMenu_0_MapScreen(void) {  // 0x829120
-  HandlePauseScreenLR();
-  HandlePauseScreenStart();
-  HandleMapScrollArrows();
-  MapScrolling();
-  MapScreenDrawSamusPositionIndicator();
-  DrawMapIcons();
-  DisplayMapElevatorDestinations();
+  // CHS: JSR $F810（纯空操作：JSL $F815=RTS 后 RTS）+ JMP $913B
+  //      （913B = LDA #$0000 / STA $0763 / RTS）——整函数缩减为仅置 pause_screen_mode=0，
+  //      跳过 LR/Start/滚动箭头/滚动/萨姆斯位置/地图图标/电梯目的地全部调用。
   pause_screen_mode = 0;
 }
 
@@ -1336,9 +1332,14 @@ void PauseMenu_1_EquipmentScreen(void) {  // 0x829142
 }
 
 void PauseMenu_2(void) {  // 0x829156
-  DisplayMapElevatorDestinations();
-  MapScreenDrawSamusPositionIndicator();
-  DrawMapIcons();
+  // CHS: JSL $82BB30 → JSR $F880 / JMP $9161（$82:F880 = SEP/LDA $69/AND #$01/CMP #$01/BEQ 88C/
+  // BRA 898；88C: JSL $82BB30/JSR $B9C8/JSL $82B672/RTS；898: REP #$30/RTS）——仅当 reg_TM&1==1
+  // 时才绘制电梯目的地/萨姆斯位置/地图图标。
+  if ((reg_TM & 1) == 1) {
+    DisplayMapElevatorDestinations();
+    MapScreenDrawSamusPositionIndicator();
+    DrawMapIcons();
+  }
   HandlePauseMenuLRPressHighlight();
   pause_screen_mode = 0;
   HandleFadeOut();
@@ -1363,7 +1364,8 @@ void PauseMenu_5(void) {  // 0x829186
   }
 }
 void PauseMenu_3_MapToEquipment_Load(void) {  // 0x8291AB
-  DisplayMapElevatorDestinations();
+  // CHS: $82:91AE JSL $82BB30 → LDA $E383,X（无副作用占位，A 随即被 JSR $AB47 覆盖）
+  //      ——删除电梯目的地显示调用，其余保持。
   EquipmentScreenSetupReserveMode();
   EquipmentScreenTransferBG1Tilemap();
   pause_screen_mode = 1;
@@ -1501,9 +1503,13 @@ void DrawPauseMenuDuringFadeout(void) {  // 0x82934B
     EquipmentScreenDisplayReserveTankAmount();
     HandlePauseMenuLRPressHighlight();
   } else {
-    DisplayMapElevatorDestinations();
-    DrawMapIcons();
-    MapScreenDrawSamusPositionIndicator();
+    // CHS: JSL $82BB30 → JSR $F89B / RTS（$82:F89B 同构 F880，顺序为
+    // ElevatorDest→DrawIcons→SamusPos）——仅当 reg_TM&1==1 时绘制；RTS 与函数自然结束等价。
+    if ((reg_TM & 1) == 1) {
+      DisplayMapElevatorDestinations();
+      DrawMapIcons();
+      MapScreenDrawSamusPositionIndicator();
+    }
   }
 }
 
