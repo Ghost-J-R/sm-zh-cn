@@ -1016,7 +1016,10 @@ CoroutineRet InitializeIoDisplayLogo_Async(void) {  // 0x8B9146
   reg_COLDATA[2] = 0x80;
   WriteReg(SETINI, 0);
   reg_SETINI = 0;
-  DecompressToMem(0x95C8F0, g_ram + 0x15000);  // CHS: 8B9295 LDA #$80D8 → LDA #$C8F0（源 0x9580D8→0x95C8F0；CHT 为 0x95C8F4）
+  // CHS: 8B9293 LDA #$9500→#$E700 + 8B9298 LDA #$80D8→#$C8F0 —— 源 $95:80D8 → $E7:C8F0
+  // （帧0/151 调查 2026-08-15：早期移植只改了低 16 位漏了 bank 字节 95→E7，导致 C 侧读 $95:C8F0
+  // 与模拟器侧 $E7:C8F0 不一致、帧 0 失配；CHT 低 16 位为 C8F4）。
+  DecompressToMem(0xE7C8F0, g_ram + 0x15000);
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0x60);
   WriteReg(VMAIN, 0x80);
@@ -1718,7 +1721,9 @@ void LoadTitleSequenceGraphics(void) {  // 0x8B9B87
   } while ((int16)(v0 - 512) < 0);
   DecompressToMem(0x94E000, g_ram + 0x10000);
   DecompressToMem(0x96FC04, g_ram + 0x14000);
-  DecompressToMem(0x95C8F0, g_ram + 0x15000);  // CHS: 8B9BCA LDA #$80D8 → LDA #$C8F0（源 0x9580D8→0x95C8F0；CHT 为 0x95C8F4）
+  // CHS: 8B9BC8 LDA #$9500→#$E700 + 8B9BCB LDA #$80D8→#$C8F0 —— 源 $95:80D8 → $E7:C8F0
+  // （与 8B9295 同构，bank 字节 95→E7 曾漏译；CHT 低 16 位为 C8F4）。
+  DecompressToMem(0xE7C8F0, g_ram + 0x15000);
   DecompressToMem(0x95A5E1, g_ram + 0x19000);
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0);
