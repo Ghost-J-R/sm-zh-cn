@@ -247,8 +247,17 @@ LABEL_9:;
     }
     if ((projectile_type[v1] & 0xF00) == 1280 || (ceres_status & 0x8000) == 0)
       goto LABEL_9;
-    CalcExplosion_Mode7(v0);
-    v2 = r18;
+    // 上游 sm(578f90b) 漏译返回值：ASM 为 JSL $8B8AD9 后 LDA $12（结果写入 RAM $12/$14）。
+    // 旧 C 代码丢弃 Point16U 返回、读取未赋值的局部 r18/r20(=0)：当 ceres_status&0x8000
+    // （Ceres 逃生 Mode7 地图旋转窗口，CeresDoor_Func_6b 置位）期间绘制 type&0xF00 非
+    // 0x300/0x500 的投射物时被画到屏幕 (0,0)。CHS 深玩实测触发对象为 0x8700 =
+    // 0x8000|kProjectileType_BeamExplosion（光束爆炸特效）——帧 17767 起 OAM 条目
+    // 17-20 逐帧失配（bug-1786784933.sav）。sm-main 与原版 ROM 未暴露是因为该输入
+    // 组合（逃生旋转窗口内绘制爆炸特效投射物）未被其测试命中；本文件此函数与上游
+    // 字节级相同，此修复对原版/CHS 均严格贴近 ROM 行为。
+    Point16U pt = CalcExplosion_Mode7(v0);
+    r20 = pt.x;
+    v2 = r18 = pt.y;
 LABEL_12:
     if ((v2 & 0xFF00) != 0)
       ;
