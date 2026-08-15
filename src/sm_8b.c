@@ -1016,7 +1016,7 @@ CoroutineRet InitializeIoDisplayLogo_Async(void) {  // 0x8B9146
   reg_COLDATA[2] = 0x80;
   WriteReg(SETINI, 0);
   reg_SETINI = 0;
-  DecompressToMem(0x9580D8, g_ram + 0x15000);
+  DecompressToMem(0x95C8F0, g_ram + 0x15000);  // CHS: 8B9295 LDA #$80D8 → LDA #$C8F0（源 0x9580D8→0x95C8F0；CHT 为 0x95C8F4）
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0x60);
   WriteReg(VMAIN, 0x80);
@@ -1718,7 +1718,7 @@ void LoadTitleSequenceGraphics(void) {  // 0x8B9B87
   } while ((int16)(v0 - 512) < 0);
   DecompressToMem(0x94E000, g_ram + 0x10000);
   DecompressToMem(0x96FC04, g_ram + 0x14000);
-  DecompressToMem(0x9580D8, g_ram + 0x15000);
+  DecompressToMem(0x95C8F0, g_ram + 0x15000);  // CHS: 8B9BCA LDA #$80D8 → LDA #$C8F0（源 0x9580D8→0x95C8F0；CHT 为 0x95C8F4）
   DecompressToMem(0x95A5E1, g_ram + 0x19000);
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0);
@@ -3503,7 +3503,7 @@ void CinematicFunction_Intro_Func54(void) {  // 0x8BBCA0
   } while ((int16)(v0 - 512) < 0);
   DecompressToMem(0x95A82F, g_ram + 0x10000);
   DecompressToMem(0x96FE69, g_ram + 0x14000);
-  DecompressToMem(0x96D10A, g_ram + 0x15000);
+  DecompressToMem(0xE78080, g_ram + 0x15000);  // CHS: 8BBCE0 A9 00 96/A9 0A D1 → A9 00 E7/A9 00 80（源 0x96D10A→0xE78080）
   WriteRegWord(VMADDL, 0);
   WriteReg(VMAIN, 0x80);
   static const StartDmaCopy unk_8BBD04 = { 1, 0, 0x19, LONGPTR(0x7f0000), 0x4000 };
@@ -3771,7 +3771,7 @@ void CinematicFunctionBlackoutFromCeres(void) {  // 0x8BC11B
   } while ((int16)(v2 - 512) < 0);
   DecompressToMem(0x95A82F, g_ram + 0x10000);
   DecompressToMem(0x96FE69, g_ram + 0x14000);
-  DecompressToMem(0x96D10A, g_ram + 0x15000);
+  DecompressToMem(0xE78080, g_ram + 0x15000);  // CHS: 8BC178 A9 00 96/A9 0A D1 → A9 00 E7/A9 00 80（源 0x96D10A→0xE78080）
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0);
   WriteReg(VMAIN, 0x80);
@@ -4031,7 +4031,7 @@ void CinematicFunction_Intro_Func86(void) {  // 0x8BC699
   for (int i = 656; i >= 0; i -= 2)
     *(uint16 *)((uint8 *)&cinematic_var5 + (uint16)i) = 0;
   DecompressToMem(0x978ADB, g_ram + 0x19000);
-  DecompressToMem(0x96EC76, g_ram + 0x15000);
+  DecompressToMem(0xE79CC0, g_ram + 0x15000);  // CHS: 8BC6B8 A9 00 96/A9 76 EC → A9 00 E7/A9 C0 9C（源 0x96EC76→0xE79CC0）
   WriteReg(VMADDL, 0);
   WriteReg(VMADDH, 0);
   WriteReg(VMAIN, 0);
@@ -4359,7 +4359,7 @@ void CinematicFunctionEscapeFromCebes(void) {  // 0x8BD480
   DecompressToMem(0x98b857, g_ram + 0x1e800);
   DecompressToMem(0x98baed, g_ram + 0x1f000);
   DecompressToMem(0x98bccd, g_ram + 0x1f800);
-  DecompressToMem(0x97e7de, g_ram + 0xa000);
+  DecompressToMem(0xE6EFB5, g_ram + 0xa000);  // CHS: 8BD5F5 A9 00 97/A9 DE E7 → A9 00 E6/A9 B5 EF（源 0x97E7DE→0xE6EFB5）
   DecompressToMem(0x99d65b, g_ram + 0x2000);
   DecompressToMem(0x99d932, g_ram + 0x6000);
   WriteRegWord(M7A, 0x100);
@@ -4809,7 +4809,7 @@ void CinematicFunction_Intro_Func126(void) {  // 0x8BDE80
   DecompressToMem(0x979803, g_ram + 0x10000);
   DecompressToMem(0x97B957, g_ram + 0x2000);
   DecompressToMem(0x97D7FC, g_ram + 0x6000);
-  DecompressToMem(0x97E7DE, g_ram + 0x1c000);
+  DecompressToMem(0xE6EFB5, g_ram + 0x1c000);  // CHS: 8BDED1 A9 00 97/A9 DE E7 → A9 00 E6/A9 B5 EF（源 0x97E7DE→0xE6EFB5）
   DecompressToMem(0x9796F4, g_ram + 0x1e000);
   DecompressToMem(0x97F987, g_ram + 0x14000);
   DecompressToMem(0x99DA9F, g_ram + 0x1e800);
