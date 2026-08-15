@@ -10,7 +10,6 @@
 #include "util.h"
 #include "enemy_types.h"
 #include <time.h>
-#include <SDL.h>
 
 void RtlRunFrameCompare(uint16 input, int run_what);
 
@@ -18,7 +17,10 @@ enum RunMode { RM_BOTH, RM_MINE, RM_THEIRS };
 uint8 g_runmode = RM_BOTH;
 
 extern int g_got_mismatch_count;
-extern bool g_pause_on_mismatch;
+extern FILE *g_diag_file;
+
+// 失配诊断双写：stderr（cmd 窗口可见，与 sm-main 行为一致）+ saves/sm-diag.txt 副本。
+#define DIAGF(...) do { fprintf(stderr, __VA_ARGS__); if (g_diag_file) fprintf(g_diag_file, __VA_ARGS__); } while (0)
 
 Snes *g_snes;
 Cpu *g_cpu;
@@ -524,52 +526,52 @@ static void VerifySnapshotsEq(Snapshot *b, Snapshot *a, Snapshot *prev) {
   
 
   if (memcmp(b->ram, a->ram, 0x20000)) {
-    fprintf(stderr, "@%d: Memory compare failed (mine != theirs, prev):\n", snes_frame_counter);
+    DIAGF("@%d: Memory compare failed (mine != theirs, prev):\n", snes_frame_counter);
     int j = 0;
     for (size_t i = 0; i < 0x20000; i++) {
       if (a->ram[i] != b->ram[i]) {
         if (++j < 256) {
           if (((i & 1) == 0 || i < 0x10000) && a->ram[i + 1] != b->ram[i + 1]) {
-            fprintf(stderr, "0x%.6X: %.4X != %.4X (%.4X)\n", (int)i,
+            DIAGF("0x%.6X: %.4X != %.4X (%.4X)\n", (int)i,
                     WORD(b->ram[i]), WORD(a->ram[i]), WORD(prev->ram[i]));
             i++, j++;
           } else {
-            fprintf(stderr, "0x%.6X: %.2X != %.2X (%.2X)\n", (int)i, b->ram[i], a->ram[i], prev->ram[i]);
+            DIAGF("0x%.6X: %.2X != %.2X (%.2X)\n", (int)i, b->ram[i], a->ram[i], prev->ram[i]);
           }
         }
       }
     }
     if (j)
       g_fail = true;
-    fprintf(stderr, "  total of %d failed bytes\n", (int)j);
+    DIAGF("  total of %d failed bytes\n", (int)j);
   }
 
   if (memcmp(b->sram, a->sram, 0x2000)) {
-    fprintf(stderr, "@%d: SRAM compare failed (mine != theirs, prev):\n", snes_frame_counter);
+    DIAGF("@%d: SRAM compare failed (mine != theirs, prev):\n", snes_frame_counter);
     int j = 0;
     for (size_t i = 0; i < 0x2000; i++) {
       if (a->sram[i] != b->sram[i]) {
         if (++j < 128) {
           if ((i & 1) == 0 && a->sram[i + 1] != b->sram[i + 1]) {
-            fprintf(stderr, "0x%.6X: %.4X != %.4X (%.4X)\n", (int)i,
+            DIAGF("0x%.6X: %.4X != %.4X (%.4X)\n", (int)i,
                     WORD(b->sram[i]), WORD(a->sram[i]), WORD(prev->sram[i]));
             i++, j++;
           } else {
-            fprintf(stderr, "0x%.6X: %.2X != %.2X (%.2X)\n", (int)i, b->sram[i], a->sram[i], prev->sram[i]);
+            DIAGF("0x%.6X: %.2X != %.2X (%.2X)\n", (int)i, b->sram[i], a->sram[i], prev->sram[i]);
           }
         }
       }
     }
     if (j)
       g_fail = true;
-    fprintf(stderr, "  total of %d failed bytes\n", (int)j);
+    DIAGF("  total of %d failed bytes\n", (int)j);
   }
 #if 1
   if (memcmp(b->vram, a->vram, sizeof(uint16) * 0x8000)) {
-    fprintf(stderr, "@%d: VRAM compare failed (mine != theirs, prev):\n", snes_frame_counter);
+    DIAGF("@%d: VRAM compare failed (mine != theirs, prev):\n", snes_frame_counter);
     for (size_t i = 0, j = 0; i < 0x8000; i++) {
       if (a->vram[i] != b->vram[i]) {
-        fprintf(stderr, "0x%.6X: %.4X != %.4X (%.4X)\n", (int)i, b->vram[i], a->vram[i], prev->vram[i]);
+        DIAGF("0x%.6X: %.4X != %.4X (%.4X)\n", (int)i, b->vram[i], a->vram[i], prev->vram[i]);
         g_fail = true;
         if (++j >= 32)
           break;
@@ -577,10 +579,10 @@ static void VerifySnapshotsEq(Snapshot *b, Snapshot *a, Snapshot *prev) {
     }
   }
   if (memcmp(b->oam, a->oam, sizeof(uint16) * 0x120)) {
-    fprintf(stderr, "@%d: VRAM OAM compare failed (mine != theirs, prev):\n", snes_frame_counter);
+    DIAGF("@%d: VRAM OAM compare failed (mine != theirs, prev):\n", snes_frame_counter);
     for (size_t i = 0, j = 0; i < 0x120; i++) {
       if (a->oam[i] != b->oam[i]) {
-        fprintf(stderr, "0x%.6X: %.4X != %.4X (%.4X)\n", (int)i, b->oam[i], a->oam[i], prev->oam[i]);
+        DIAGF("0x%.6X: %.4X != %.4X (%.4X)\n", (int)i, b->oam[i], a->oam[i], prev->oam[i]);
         g_fail = true;
         if (++j >= 16)
           break;
@@ -956,23 +958,13 @@ void DrawFrameToPpu(void) {
   g_snes->cpu->nmiWanted = false;
 }
 
-void SaveBugSnapshot(const char *reason) {
+// 与 sm-main 行为完全一致：失配时保存快照（节流 5*60 帧），不弹任何窗口。
+// 失配诊断文本由 VerifySnapshotsEq 经 DIAGF 双写（stderr + saves/sm-diag.txt）。
+void SaveBugSnapshot() {
   if (!g_debug_flag && g_got_mismatch_count == 0) {
     char buffer[64];
     snprintf(buffer, sizeof(buffer), "saves/bug-%d.sav", (int)time(NULL));
     RtlSaveSnapshot(buffer, true);
-    if (g_pause_on_mismatch) {
-      // 交互模式：弹窗前冲刷 stdio，保证弹窗挂起/被强杀时日志已落盘。
-      // 自动比对（--no-pause）不执行 flush，保持与基线一致的输出行为。
-      fflush(stdout);
-      fflush(stderr);
-      char msg[256];
-      snprintf(msg, sizeof(msg),
-               "%s\nSnapshot saved to %s\n\n窗口画面保持显示，点“确定”继续运行。\n"
-               "自动比对请加 --no-pause 参数关闭本弹窗。",
-               reason, buffer);
-      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "SuperMet", msg, NULL);
-    }
   }
   g_got_mismatch_count = 5 * 60;
 }
@@ -1014,7 +1006,7 @@ again_theirs:
     if (g_debug_flag)
       goto again_theirs;
 
-    SaveBugSnapshot("Verify failure!");
+    SaveBugSnapshot();
     RunOneFrameOfGame_Emulated();
     goto getout;
   }
@@ -1034,7 +1026,7 @@ getout:
 
   if (menu_index & 0xff00) {
     printf("MENU INDEX TOO BIG!\n");
-    SaveBugSnapshot("MENU INDEX TOO BIG!");
+    SaveBugSnapshot();
     menu_index &= 0xff;
   }
 

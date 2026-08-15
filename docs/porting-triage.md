@@ -88,7 +88,7 @@
 
 ## 5. 验证方法沉淀（2026-08-15 复位钩子增量实证）
 
-**失配弹窗四件套（2026-08-15 新增）**：失配时 `SaveBugSnapshot(reason)` 保存 `saves/bug-<时间戳>.sav` 后弹 SDL_ShowSimpleMessageBox（标题 SuperMet，内容含原因+快照文件名+操作提示）；窗口画面保持显示；printf 文本照常进 stdout/stderr（cmd 重定向得 diag.txt）；弹窗前 fflush 保证日志已落盘。**默认弹窗开启**（用户交互验证直观看）；自动比对命令加 `--no-pause` 关闭弹窗防挂起（`sm.exe --no-pause > diag.txt 2>&1`）。节流 = g_got_mismatch_count 5*60 帧一次；--debug 模式不弹。
+**失配诊断双写（2026-08-15 修正，替代此前误加的弹窗方案）**：失配行为与 sm-main 完全一致——`printf("Verify failure!")` 照常显示在 cmd 窗口、`SaveBugSnapshot()` 照常保存 `saves/bug-<时间戳>.sav`、窗口标题照常加 " | BUG FOUND!"，无任何额外弹窗（用户澄清：所说的"弹窗"即 cmd 控制台窗口本身）。新增：sm 启动时打开 `saves/sm-diag.txt`（"w" 截断 + `_IONBF` 无缓冲），`VerifySnapshotsEq` 的 12 处诊断打印经 `DIAGF` 宏双写（stderr 原样 + 文件副本）——**diag 文件 = 纯 stderr 副本，与既有基线（diag_85 等）可直接逐行对比**，自动验证不再需要 cmd 重定向。注意：`Verify failure!`（stdout）与快照保存日志（stdout）不进 diag 文件（保持基线一致性，失配帧信息由 @N 头行承载）。**当前基线**：`Tools\disasm\diag_baseline.txt`（6,302 行完整版，@0-@151 共 304 块；旧 diag_85.txt 的末块因 cmd 重定向 stderr 强杀截断少 20 行，内容实质一致）。实测：stderr 重定向副本与 sm-diag.txt 前 6,281 行逐行一致，唯一差异为 stderr 强杀截断尾巴——证明双写正确且文件版更完整。
 
 1. **快照 total_frames/PC 不反映失配点**：SaveBugSnapshot 在 RestoreSnapshot(&g_snapshot_before) 之后调用，快照保存的是帧开始状态（PC=复位向量恒成立）。失配定位必须用 **stderr 差异字节捕获**：`cmd /c "sm.exe > diag.txt 2>&1"`（DSH 沙箱禁止命名管道，PowerShell `-RedirectStandard*` 与 `|` 捕获均不可用，必须走 cmd 文件句柄重定向），读 `@N: Memory compare failed` 块的差异地址列表（每帧最多 256 字节，按 RAM 地址升序）。
 2. **增量零回归标准**：目标增量移植后，"钩子版 diag" 与 "基线版 diag"（git stash 回退该增量）逐行对比零差异 = 该增量未引入任何新失配（差异可能仍存在，但全部来自其他未移植点）。

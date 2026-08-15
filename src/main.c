@@ -54,7 +54,12 @@ static uint8_t g_pixels[256 * 4 * 240];
 static uint8_t g_my_pixels[256 * 4 * 240];
 
 int g_got_mismatch_count;
-bool g_pause_on_mismatch = true;
+FILE *g_diag_file;
+
+static void CloseDiagFile(void) {
+  if (g_diag_file)
+    fclose(g_diag_file);
+}
 
 
 enum {
@@ -329,12 +334,15 @@ int main(int argc, char** argv) {
     g_debug_flag = true;
     argc -= 1, argv += 1;
   }
-  if (argc >= 1 && strcmp(argv[0], "--no-pause") == 0) {
-    // 失配时只打印+保存快照，不弹阻塞式消息框（自动化逐帧比对用）
-    g_pause_on_mismatch = false;
-    argc -= 1, argv += 1;
-  }
   ParseConfigFile(config_file);
+
+  // 失配诊断双写：stderr 照常显示在 cmd 窗口（与 sm-main 行为一致），
+  // 同时把逐帧比对诊断副本写入 saves/sm-diag.txt（无缓冲，强杀不丢），供自动比对。
+  g_diag_file = fopen("saves/sm-diag.txt", "w");
+  if (g_diag_file) {
+    setvbuf(g_diag_file, NULL, _IONBF, 0);
+    atexit(CloseDiagFile);
+  }
 
   g_snes_width = (g_config.extended_aspect_ratio * 2 + 256);
   g_snes_height = 240;// (g_config.extend_y ? 240 : 224);
