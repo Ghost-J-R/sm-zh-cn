@@ -4622,11 +4622,11 @@ void GameOptionsMenu_1_LoadingOptionsScreen(void) {  // 0x82EC11
   debug_invincibility = 0;
   for (int i = 510; i >= 0; i -= 2)
     palette_buffer[i >> 1] = kMenuPalettes[i >> 1];
-  DecompressToMem(0x978DF4, g_ram + 0x1c000);
+  DecompressToMem(0xE6FB0E, g_ram + 0x1c000);  // CHS: 原 0x978DF4（$82:EC66 LDA #$E600/$48 + LDA #$FB0E/$47）
   DecompressToMem(0x978FCD, g_ram + 0x1c800);
-  DecompressToMem(0x9791C4, g_ram + 0x1d000);
+  DecompressToMem(0xE6F77C, g_ram + 0x1d000);  // CHS: 原 0x9791C4（$82:EC87 LDA #$E600 + LDA #$F77C）
   DecompressToMem(0x97938D, g_ram + 0x1d800);
-  DecompressToMem(0x97953A, g_ram + 0x1e000);
+  DecompressToMem(0xE6F953, g_ram + 0x1e000);  // CHS: 原 0x97953A（$82:ECA9 LDA #$E600 + LDA #$F953）
   for (j = 1023; (j & 0x8000) == 0; --j)
     ram3000.pause_menu_map_tilemap[j] = custom_background[j + 5375];
   menu_option_index = 0;
@@ -4706,13 +4706,14 @@ void GameOptionsMenuItemFunc_2_ToggleJapanese(void) {  // 0x82EDDA
 }
 
 void OptionsMenuFunc4(void) {  // 0x82EDED
+  // CHS: $82:EDF6/EE28 两个分支第一个 OptionsMenuFunc5 的 LDY #$0018 → #$0032（中文行更长）。
   if (japanese_text_flag) {
-    OptionsMenuFunc5(0x400, 0x288, 0x18);
+    OptionsMenuFunc5(0x400, 0x288, 0x32);
     OptionsMenuFunc5(0x400, 0x2C8, 0x18);
     OptionsMenuFunc5(0, 0x348, 0x32);
     OptionsMenuFunc5(0, 0x388, 0x32);
   } else {
-    OptionsMenuFunc5(0, 0x288, 0x18);
+    OptionsMenuFunc5(0, 0x288, 0x32);
     OptionsMenuFunc5(0, 0x2C8, 0x18);
     OptionsMenuFunc5(0x400, 0x348, 0x32);
     OptionsMenuFunc5(0x400, 0x388, 0x32);
