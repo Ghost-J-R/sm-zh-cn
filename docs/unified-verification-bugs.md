@@ -1,8 +1,10 @@
-# 统一验证记录：交互游玩暴露的三处 CHS 移植缺陷与修复
+# 统一验证记录：交互游玩暴露的七处 CHS 移植缺陷与修复
 
-> 提交：`185df46`（src/sm_82.c、src/sm_8b.c，共 14 行插入、5 行删除）
-> 验证日期：2026-08-15
-> 结论：用户手动完整流程（标题 → 存档选择 → slot 1 → 选项菜单 → 开场文字 → Ceres 飞船场景）最终回归 **零失配**（sm-diag.txt 0 字节、无 bug 快照）。
+> 提交：`185df46`（Bug 1-3）、`fa5ad00`（Bug 4）、`4e8603a`+`25f1136`（Bug 5-6）、`989583f`（消息框崩溃）、`8f4d709`（Bug 7）
+> 验证日期：2026-08-15 ～ 2026-08-16
+> 结论：标题 → 存档选择 → 选项菜单 → 开场文字 → Ceres 飞船/逃生 → Zebes → 暂停地图 → 变形球消息框 → 撤离开火，各场景经快照复现或实测验证，最终回归 **零失配**。
+>
+> 约定：使用中文思考，思考时，推理时使用中文（见 readme.md）。
 
 ---
 
@@ -123,18 +125,128 @@ DecompressToMem(0xE78000, g_ram + 0x15000);  // 原误抄 0xE78080
 
 ---
 
-## 5. 验证方式与结果
+## 5. Bug 4：Ceres 逃生 Mode7 旋转窗口内 BeamExplosion 特效画到 (0,0)
+
+> 提交：`fa5ad00`（src/sm_93.c）
+
+### 现象
+
+帧 17767（Ceres 逃生 Mode7 旋转窗口内开火）起 OAM 条目 17-20 逐帧失配：mine 把 BeamExplosion 特效投射物（type 0x8700 = 0x8000|kProjectileType_BeamExplosion）画到屏幕 (0,0)，theirs 为旋转后的正确坐标。
+
+### 根因
+
+`DrawBombAndProjectileExplosions`（0x93834D，管投射物槽 5-9）漏译 `CalcExplosion_Mode7`（$8B:8AD9）的返回值：ROM 侧 JSL 后用 $12/$14 作绘制坐标，C 侧丢弃 `Point16U` 返回、读未赋值的局部 r18/r20(=0)。这是**上游 snesrev/sm 578f90b 的潜伏缺陷**，与 CHS 无关——sm-main 与原版 ROM 未暴露只因该输入组合（旋转窗口内绘制爆炸特效）未被其测试命中。
+
+### 修复
+
+按 ASM（JSL $8B8AD9 → LDA $12）接回返回值：`v2 = r18 = pt.y; r20 = pt.x;`。快照 bug-1786784933.sav 复现验证零失配。
+
+---
+
+## 6. Bug 5：暂停地图主循环误判 + stub 冲突与加载崩溃（F71x 专项说明）
+
+> 提交：`4e8603a`（暂停地图移植补全 + stub 重定位）、`25f1136`（垫片移除）
+> 另：`989583f`（消息框 cart_readLorom 崩溃，变形球道具框）——见 §7
+
+### Bug 5a：暂停地图 $82:F810 链误判
+
+早期移植把 $82:F810 链判为 no-op，实际是补丁新增的完整地图主循环（Select 切换收集率标签 + reg_TM&1 条件绘制 + LR/Start/滚动/标记/图标/电梯）。反汇编实证后逐条译回 C：`CHS_MapScreen_MainLoop`($82:F815)、`CHS_MapScreen_LabelPaletteUpload`($E3:9199)、`CHS_MapScreen_LabelUpload`($E3:91C7)、`CHS_MapScreen_LabelWrite_92C1`($E3:92C1)、`CHS_MapScreen_LoadGfx_DMA`($E3:9290)、`CHS_MapScreen_QueueSelectSfx`($E3:92DE→QueueSfx1_Max6(0x38))。
+
+### Bug 5b：stub 重定位与加载崩溃（F71x 专项说明）
+
+上游 "Fix so main code is in a function" 的 stub 原在 $82:F713——CHS 在 $82:F713-F722 放了跳转表/标签表数据，stub 与之冲突：加载存档后 RTL 返回地址（旧 stub 压栈的 F718/F71B/F71F）落进数据区 0x82F720（标签表数据 `40`=RTI）→ cart_readLorom 崩溃（PC history 恒为 `…0x80834A → 0x82F720`）。
+
+处理链：
+1. stub 重定位到 $82:F8B6（两 ROM 空白区，跳转表/标签表零占用），8944 补丁与 LoadSnesState 重定向常量同步为 F8B6/F8BD；
+2. **F71x 是什么**——旧 stub 的三个返回点：F718（JSL $809459 返回）、F71B（JSR $8948 返回）、F71F（JSL $808338 返回）；
+3. **为什么新存档免疫**——stub 迁 F8B6 后压栈值只有 F8BB/F8BE/F8C2 系，F713-F722 是纯 ROM 数据区、没有任何代码路径压入这些值；栈返回平移垫片按用户决定直接移除（`25f1136`）；
+4. **运维约定**——旧 stub 时代的 15 份 bug-*.sav 快照作废删除（sm.srm 不受影响），AUTOLOAD 复现一律用新布局快照。
+
+---
+
+## 7. Bug 6：消息框崩溃（cart_readLorom 读 0x2001）+ 9 处补丁/转录分歧
+
+> 提交：`989583f`（src/sm_cpu_infra.c、src/sm_85.c）
+
+拿到变形球弹道具框即崩溃：`While trying to read from 0x2001`，PC history 0x8582BC-C3。
+
+### 根因
+
+上游 11-NOP 补丁按**原版**布局对齐 8582B8（原版 = JSR $8136/JSL $808F0C/JSL $8289EF），CHS 实际布局为 JSL $808F0C/JSL $8289EF/**JSL $E38774**/JSR $8136/RTS——11 个 NOP 吃掉 JSL $E38774 前 3 字节，残字节 0xE3 被当作 opcode SBC ($20,S),Y，垃圾栈指针间接读落到 0x2001 → Die。
+
+### 修复
+
+- sm_cpu_infra.c：8582B8 改 8 NOP + 保留 JSL $E38774 + 3 NOP + 保留 RTS；85835A 改 4 NOP（保留 JSL $E38527 中文图形上传）；新增 E3 内部补丁 5 条（E38527/E38774 头尾的帧等待/音乐/SFX 调用，C 转录省略故 emulator 侧同步跳过）；
+- sm_85.c 六处转录副作用镜像：`message_box_das0l_value=0x180`（原来从未赋值，C 侧 DMA 会是 0 字节）、8774/853A/8707 的 `$CC/$CD` 清零与 `$CE=e[2]`（LDA [dp] 24 位指针的 bank 分量）、8615 的 B5 表常量索引 `$C8>>1`、8707 补上可达的 Y=0x40 分支（E6A577 高亮，原注释误标死代码）、87DA 传参 0x0C/0x0E（原来 ×256 误读）。
+
+---
+
+## 8. Bug 7：Ceres 逃生旋转窗口内开火，光束投射物 Y=0xFC 失配
+
+> 提交：`8f4d709`（src/sm_93.c，1 行修复 + 4 行注释）
+
+### 现象
+
+帧 15922 起成组失配（组间空档 = 未开火）：每帧 1 字节 RAM + 1 个 OAM 字。失配地址 0x3B5/0x3C5/0x3CD/0x3D1/0x3D5/0x3D9/0x3DD/0x3E1/0x3E5/0x3E9/0x41D/0x421 全部是 OAM 条目 17/21/23-30/43/44 的 **Y 字节**，mine 恒为 0xFC（= -4，屏外），theirs 为旋转后的屏内值，X/tile/attr 全一致。
+
+### 定位过程（AUTOLOAD + 分层插桩）
+
+1. bug-1786850061.sav（帧前 theirs 状态：槽 1 type=0x8000 普通光束、ceres_status=0x0002）→ save0.sav，帧 200 自动加载把失配钉死；
+2. OAM ycoord 写入点 0xFC 条件打印（T1-T7）→ 抓到 `DrawGrappleOrProjectileSpritemap`（$81:8A5F）写 idx=0xAC（条目 43）yin=0 off=0xFC；
+3. 入口打印（TB/TP）→ 锁定 `DrawProjectileSpritemap k=2`（槽 1）；
+4. 输入输出打印（CM7/P2）→ `CalcExplosion_Mode7` 实输出 y=0x98（正确，theirs=0x94 差 4 为帧内位移），而 `DrawPlayerExplosions2` 内 r18=0——**检查用的 v3 通过 0xFF00 越界检查后，绘制传入的是未赋值的 r18**。
+
+### 根因
+
+`DrawPlayerExplosions2`（0x938254，管投射物槽 0-4）Mode7 分支：
+
+```c
+Point16U pt = CalcExplosion_Mode7(v0);
+v3 = pt.y;      // 只接了检查值
+r20 = pt.x;
+// r18 漏接 → 保持 0 → 绘制 y = 0 + spritemap 偏移 0xFC(-4) = 0xFC
+```
+
+ROM $93:82B3 为 `JSL $8B8AD9 → LDA $12`（$12=y）→ $82CD 检查 $12 → $818A4B 用 $12 作绘制 y。这是 **fa5ad00（Bug 4）同款"丢弃 Mode7 返回值"缺陷在另一个函数的残留**：fa5ad00 修了 DrawBombAndProjectileExplosions（槽 5-9），本函数（槽 0-4）漏修，此前验证的帧 17767 场景未触发它。
+
+### 为什么原版测试多次没有这个失配（用户重点疑问）
+
+1. **bug 在 C 移植层，与 ROM 无关**：失配是 mine（snesrev 的 C 移植 sm_93.c）vs theirs（ROM 执行）之间的差异；实测原版 ROM 与 CHS ROM 在 bank 93（含 $93:8254/$93:834D）**逐字节相同（0 diff）**——"汉化没改这里"完全正确；
+2. **触发窗口只有 1-2 帧**：失配要求"ceres_status 置 0x8000（旋转启动）的瞬间，槽 1 有存活的光束投射物"——快照实测失配发生在旋转启动边界（帧前 ceres_status=0x0002、下一快照已是 0x8000 且槽清空）；开火帧与旋转启动帧的相位由输入序列决定；
+3. **原版测试没踩中 = 开火时机没落在窗口**，与 ROM 内容差异无关——同一引擎 + 原版 ROM，在同样的开火时机下同样会失配（sm-main 亦然，fa5ad00 注释已记"该输入组合未被其测试命中"）。汉化版其他 bank 的改动（如 8B 电影文本函数）会平移帧时序相位，使"玩家自然的开火时机"恰好与旋转启动同帧的概率改变。
+
+### 修复
+
+```c
+Point16U pt = CalcExplosion_Mode7(v0);
+v3 = r18 = pt.y;   // 与 fa5ad00 的 v2 = r18 = pt.y 同款双赋值
+r20 = pt.x;
+```
+
+### 验证
+
+- AUTOLOAD bug-1786850061.sav 帧 200：修复前 mine=0xFC vs theirs=0x94 必失配；修复后 r18=0x98、帧 200/202 起零失配；
+- 排查中排除项（有证据）：ROM $818AB7 是 RTL 空桩（C 侧"漏分支"实为正确）；ClearUnusedOam 清零值为 0xF0；CalcExplosion_Mode7 全 3 个调用点（sm_93.c×2、sm_9b.c×1）已核对无其他同款缺陷——槽 0-4（本修复）+ 槽 5-9（fa5ad00）全闭环；
+- 10 处临时插桩全部移除（git diff 仅剩 sm_93.c 一处修复），14 秒启动冒烟 0 字节。
+
+---
+
+## 9. 验证方式与结果
 
 | 验证项 | 方法 | 结果 |
 |---|---|---|
 | Bug 3 修复 | bug 快照复制为 `saves/save0.sav`，临时在 main.c 帧 200 自动 `RtlSaveLoad(2,0)` 加载，30 秒内复现原失配帧 | 修复前必失配；修复后 **帧 200 零失配** |
 | Bug 1/2 修复 | 同一快照场景（状态 = 选项菜单→开场→飞船前）逐帧对比 | 零失配 |
+| Bug 4 修复 | bug-1786784933.sav AUTOLOAD 帧 200 | 修复前必失配；修复后零失配 |
+| Bug 5 修复 | bug-1786796724.sav AUTOLOAD 加载标记确认 + 60 秒存活 + 纯启动回归 | 零失配零崩溃、diag 0 字节 |
+| Bug 6 修复 | 14 秒启动冒烟 + 8 个补丁地址常量二进制校验 | 进程存活、diag 0 字节、常量全部命中 |
+| Bug 7 修复 | bug-1786850061.sav AUTOLOAD 帧 200 双向验证（修复前复现/修复后复测） | 修复前 mine=0xFC vs theirs=0x94；修复后 r18=0x98、零失配 |
 | 启动回归 | 60 秒无人值守 boot（标题 + 开场） | sm-diag.txt 0 字节 |
-| 最终手动回归 | 用户完整流程：标题 → 存档选择 → slot 1 → 选项菜单 → 开场文字 → 飞船场景 | **零失配**（0 字节 diag、0 个 bug 快照） |
+| 最终手动回归 | 用户完整流程：标题 → 存档选择 → slot 1 → 选项菜单 → 开场文字 → 飞船场景 → Zebes → 暂停地图 → 变形球消息框 → 撤离开火 | **零失配**（0 字节 diag） |
 
 ---
 
-## 6. 本次调查沉淀的可复用工具与陷阱
+## 10. 本次调查沉淀的可复用工具与陷阱
 
 ### 6.1 bug 快照（.sav）解析格式
 
@@ -170,14 +282,26 @@ sramOff = ramOff - 51 - 8192
 - 65816 取指监控中 `cpu->pc` 是**递增后**的值，比对立即数指令边界时要留 off-by-one；
 - ROM 侧写路径监控打印当前源指针（$47/$48/$49）与目标指针（$4C/$4D/$4E）能直接区分"读错源"与"写错目标"两类 bug。
 
+### 6.5 OAM 失配的定位方法论（Bug 7 沉淀）
+
+- **失配地址 → 条目解码**：OAM 区 = RAM $0370-056F，条目 n 的 X/Y/tile/attr = $0370+4n 起；diag 的 `0x3B5` 类地址 mod 4 余 1 = **Y 字节**；
+- **"mine 恒值"判读**：mine=0xFC 且 X/tile 一致 → 是**主动写入**（帧前状态为 theirs 上帧值，未写会残留它）——0xFC = 输入 y=0 + spritemap 偏移 0xFC(-4)，指向"检查值与绘制值分离"的变量漏接；
+- **分层条件打印**（插桩成本低、命中率高）：先在所有 ycoord 赋值点挂 `(uint8)Y==0xFC` 条件打印（T1-T7）锁定写入函数 → 在入口挂 `y==0` 打印（TB/TP）锁定调用方 → 在计算函数挂输入输出打印（CM7/P2）锁定变量；全部走 DIAGF 双写 sm-diag.txt；
+- **旋转边界类 bug 的复现**：快照保存的是**帧前 theirs 状态**（失配帧开始前）——AUTOLOAD 加载后第一帧即复现，无需等原帧号；
+- **"原版为什么没有"的验证套路**：先逐字节对比两 ROM 相关 bank（本次 bank 93 实测 0 diff），确认 ROM 侧一致 → 失配只可能来自 C 移植层或触发时机，再据快照分析触发窗口（本次 = ceres_status 置位瞬间 + 槽 1 光束存活，仅 1-2 帧）。
+
 ---
 
-## 7. 变更文件清单
+## 11. 变更文件清单
 
 | 文件 | 改动 |
 |---|---|
-| `src/sm_82.c` | OptionsMenuFunc4：两处 `OptionsMenuFunc5(..., 0x2C8, 0x18)` → `0x32` + 注释 |
-| `src/sm_8b.c` | Func20：补 4 条 DP 副作用写入 + 注释 |
-| `src/sm_8b.c` | Func54 / BlackoutFromCeres：`DecompressToMem(0xE78080, ...)` → `0xE78000` + 注释 |
+| `src/sm_82.c` | OptionsMenuFunc4：两处 `OptionsMenuFunc5(..., 0x2C8, 0x18)` → `0x32` + 注释（Bug 1）；CHS_MapScreen_* 六个函数（Bug 5a） |
+| `src/sm_8b.c` | Func20：补 4 条 DP 副作用写入 + 注释（Bug 2）；Func54 / BlackoutFromCeres：`DecompressToMem(0xE78080, ...)` → `0xE78000` + 注释（Bug 3） |
+| `src/sm_93.c` | DrawBombAndProjectileExplosions：接回 CalcExplosion_Mode7 返回值（Bug 4）；DrawPlayerExplosions2：`v3 = r18 = pt.y`（Bug 7） |
+| `src/sm_cpu_infra.c` | stub 重定位 F8B6 + 消息框补丁重对齐 + E3 内部补丁（Bug 5b/6） |
+| `src/sm_rtl.c` | LoadSnesState 重定向常量 F8BD（Bug 5b）；栈返回平移垫片移除（25f1136） |
+| `src/sm_85.c` | 消息框六处转录副作用镜像（Bug 6） |
+| `saves/` | 旧 stub 时代 15 份 bug-*.sav 作废删除（25f1136）；新快照 bug-1786784933/1786796724/1786850061/1786850077.sav 保留 |
 
-全部调试插桩（main.c、snes.c、sm_80.c、sm_cpu_infra.c）已移除，工作树与 HEAD 一致。
+全部调试插桩（sm_rtl.c、sm_81.c、sm_90.c、sm_94.c、sm_8b.c、sm_93.c 的临时打印）已移除，工作树与 HEAD 一致。
