@@ -41,6 +41,7 @@ static void MsgBox_CHS_853A(void) {  // $E3:853A（E38527 的子函数）
     return;
   uint16 t = message_box_index - 1;                    // DEC
   uint16 x = (uint16)(t + (uint16)(t << 1));           // ASL/CLC/ADC $CC（×3 16 位截断）
+  *(uint16 *)&g_ram[0xCC] = 0;                         // 尾部 LDA #$0000/STA $CC（16 位写同时清 $CD）
   const uint8 *b = RomFixedPtr(0xE6A2B0 + x);
   uint16 src = b[0] | (b[1] << 8);
   // 段1：+0x80、0x60 字节、VRAM $42C0、bank E6A2B2[X]
@@ -70,18 +71,21 @@ static void MsgBox_CHS_853A(void) {  // $E3:853A（E38527 的子函数）
 }
 
 static void MsgBox_CHS_8615(void) {  // $E3:8615（E38527 的子函数）
-  // 消息框类型 2-6/0D/13 → 按 $C8 从 E6A3B5/E6A3CD 表做 4 段 DMA（X=(Y-1)*8，段间 +2）。
+  // 消息框类型 2-6/0D/13 → 按 $C8 从 E6A3B5/E6A3CD 表做 4 段 DMA。
+  // ROM：LDY $C8/DEC/ASL/ASL/ASL → X=($C8-1)*8 只索引 E6A3CD 表（段间 INX INX）；
+  //      B5/B6/B7 表用 TYA/LSR/TAX 的常量索引 $C8>>1（每段仅地址值 +0x10i）。
   uint16 mi = message_box_index;
   if (mi != 2 && mi != 3 && mi != 4 && mi != 5 && mi != 6 && mi != 0xD && mi != 0x13)
     return;  // JMP $8704（PLY/PLX/RTS）
-  uint16 x = (uint16)((*(uint16 *)&g_ram[0xC8] - 1) * 8);  // LDY $C8/DEC/ASL/ASL/ASL
+  uint16 c8 = *(uint16 *)&g_ram[0xC8];                      // LDY $C8
+  uint16 x = (uint16)((c8 - 1) * 8);                        // DEC/ASL/ASL/ASL
+  const uint8 *t = RomFixedPtr(0xE6A3B5 + (c8 >> 1));       // 98 4A AA → BF B5 A3 E6（常量索引）
   for (int i = 0; i < 4; i++) {
     uint16 xi = (uint16)(x + i * 2);                        // 段间 INX INX
-    const uint8 *t = RomFixedPtr(0xE6A3B5 + xi);            // {lo,hi,bank} 项
     WriteRegWord(DAS1L, 0x10);
     WriteRegWord(VMADDL, *(uint16 *)RomFixedPtr(0xE6A3CD + xi));  // LDA $E6A3CD,X
-    WriteRegWord(A1T1L, (uint16)(*(uint16 *)t + i * 0x10));       // LDA $E6A3B5,X + ADC #$10i
-    WriteReg(A1B1, t[2]);                                   // LDA $E6A3B7,X
+    WriteRegWord(A1T1L, (uint16)(*(uint16 *)t + i * 0x10));       // LDA $E6A3B5,X2 + ADC #$10i
+    WriteReg(A1B1, t[2]);                                   // LDA $E6A3B7,X2
     WriteReg(MDMAEN, 2);
   }
 }
@@ -105,8 +109,11 @@ static void MsgBox_CHS_8774(void) {  // $E3:8774（$85:82B8 JSL 目标）：中�
     const uint8 *e = RomFixedPtr(0xE6A35E + x);         // 3 字节指针表 {lo,hi,bank}
     uint32 src = e[0] | (e[1] << 8) | ((uint32)e[2] << 16);
     memcpy(g_ram + 0x3200, RomFixedPtr(src), 0x300);    // 0x180 字（CPX #$180）
+    message_box_das0l_value = 0x180;      // STX $09（85831E DAS1L 的功能输入）
+    *(uint16 *)&g_ram[0xCC] = 0;          // 尾部 LDA #$0000/STA $CC（16 位写同时清 $CD）
+    g_ram[0xCE] = e[2];                   // 16 位 STA $CD 的溢出字节（LDA [dp] 指针的 bank 分量）
   }
-  // STX $09 位于比对白名单（0x00-0x50），无观察效果——忽略。
+  // STX $09 位于比对白名单（0x00-0x50），无观察效果——忽略；但其值同时是 85831E DAS1L 的功能输入，见上。
 }
 
 static void MsgBox_CHS_87DA(uint16 y) {  // $E3:87DA（$85:840C JSL 目标）：4 个边角 tile
@@ -120,12 +127,14 @@ static void MsgBox_CHS_87DA(uint16 y) {  // $E3:87DA（$85:840C JSL 目标）：
   g_ram[0x3243 + x1] = v;
 }
 
-static void MsgBox_CHS_8707(void) {  // $E3:8707（$85:8526 JML 目标）：保存确认 tilemap 拷贝
-  // 进入时 X=0x100、Y=0x80（ToggleSaveConfirmationSelection 的循环上下文）。
+static void MsgBox_CHS_8707(uint16 y) {  // $E3:8707（$85:8526 JML 目标）：保存确认 tilemap 拷贝
+  // 进入时 X=0x100、Y=0x40/0x80（ToggleSaveConfirmationSelection：selection==2 → Y=0x80）。
   // CPY #$0080/BEQ：DBR=E6，E6:A4F7 起 0x40 字 → $7E31C0+X（=$7E32C0），JML $858532。
-  memcpy(g_ram + 0x31C0 + 0x100, RomFixedPtr(0xE6A4F7), 0x80);
-  // CPY #$0040 分支（E6:A577）与 fallthrough（STA $7E3200,X/JML $85852A）为死代码：
-  // 8526 调用点 Y 恒为 0x80（LDY #$0080），两分支不可达（asm 注释备查）。
+  // CPY #$0040/BEQ：E6:A577（selection==0 的高亮，0↔2 交替时可达——原注释误标死代码）。
+  uint32 src = (y == 0x40) ? 0xE6A577 : 0xE6A4F7;
+  memcpy(g_ram + 0x31C0 + 0x100, RomFixedPtr(src), 0x80);
+  *(uint16 *)&g_ram[0xCC] = 0;  // A9 #$0040/STA $CC 计数器减尽（16 位写同时清 $CD）
+  // fallthrough（STA $7E3200,X/JML $85852A）确为死代码：Y 仅 0x40/0x80（LDY 二选一）。
 }
 
 
@@ -301,7 +310,7 @@ static void DrawSpecialButtonAndSetupPpuForLargeMessageBox(uint16 a) {
     }
   }
   *(uint16 *)((uint8 *)&ram3000.pause_menu_map_tilemap[256] + kMsgBoxSpecialButtonTilemapOffs[message_box_index - 1]) = kTileNumbersForButtonLetters[v1 >> 1];
-  MsgBox_CHS_87DA((a & 0x10) ? 0x0C00 : 0x0E00);  // CHS: 85840C 原版单 tile 写（LDA $1C1F/…/STA $7E3200,X）→ JSL $E387DA + JMP $841D
+  MsgBox_CHS_87DA((a & 0x10) ? 0x0C : 0x0E);  // CHS: 85840C 原版单 tile 写 → JSL $E387DA + JMP $841D（ROM: A0 0C 00/A0 0E 00 = LDY #$000C/#$000E）
   SetupPpuForActiveMessageBox(416);
 }
 
@@ -354,8 +363,7 @@ static void ToggleSaveConfirmationSelection(void) {
     v0 = 128;
   uint16 v1 = 128;
   int r52 = 32;
-  MsgBox_CHS_8707();  // CHS: 858526 STA $7E3200,X → JML $E38707（源 $9581,Y → E6:A4F7 起 0x40 字，E3 代码 JML $858532 跳回循环尾）
-  (void)v0;
+  MsgBox_CHS_8707(v0);  // CHS: 858526 STA $7E3200,X → JML $E38707（v0 即 ROM 的 Y：selection==2 → 0x80，否则 0x40）
   (void)v1;
   (void)r52;
   WriteRegWord(VMADDL, addr_unk_6059A0);

@@ -825,11 +825,26 @@ Snes *SnesInit(const char *filename) {
   { uint8 t[] = { 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0x858236, t, sizeof(t)); } // HandleMusicQueue etc
 
   // Patch WriteMessageTilemap
-  { uint8 t[] = { 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0x8582B8, t, sizeof(t)); }
+  // CHS: 8582B8 = JSL $808F0C / JSL $8289EF / JSL $E38774 / JSR $8136 / RTS
+  //   （原版此处为 JSR $8136/JSL $808F0C/JSL $8289EF + 继续执行主体，上游 11-NOP 按原版对齐；
+  //     CHS 的 JSL $E38774 是中文 tilemap 加载，必须保留——8 NOP 抹音乐/SFX，3 NOP 抹帧等待，RTS 保留。）
+  { uint8 t[] = { 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0x8582B8, t, sizeof(t)); } // JSL $808F0C + JSL $8289EF
+  { uint8 t[] = { 0x18, 0x18, 0x18 }; PatchBytes(0x8582C4, t, sizeof(t)); } // JSR $8136 (WaitForLagFrame)
 
   // Patch SetupPpuForActiveMessageBox
   { uint8 t[] = { 0x18, 0x18, 0x18 }; PatchBytes(0x858321, t, sizeof(t)); } // WaitForLagFrame
-  { uint8 t[] = { 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0x85835A, t, sizeof(t)); } // InitializePpuForMessageBoxes
+  // CHS: 85835A = JSL $E38527 / JSL $8289EF / RTS（原版为 JSL $808F0C/JSL $8289EF，上游 8-NOP 按原版对齐）
+  //   JSL $E38527 是中文消息框图形上传（VRAM 全量比较），必须保留；仅 NOP SFX。
+  { uint8 t[] = { 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0x85835E, t, sizeof(t)); } // JSL $8289EF (HandleSoundEffects)
+
+  // CHS E3 消息框例程内部调用（C 转录按惯例省略，emulator 侧必须同样跳过）
+  // E3:8527 = JSR $8767(帧等待) / JSR $880D / JSR $853A / JSR $8615 / SEP / JSL $808F0C / RTL
+  { uint8 t[] = { 0x18, 0x18, 0x18 }; PatchBytes(0xE38527, t, sizeof(t)); } // JSR $8767 (WaitForLagFrame)
+  { uint8 t[] = { 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0xE38535, t, sizeof(t)); } // JSL $808F0C (HandleMusicQueue)
+  // E3:8774 = JSR $8767 / JSL $808F0C / JSL $8289EF / 主体（$05A6/$05A4/$05A2/$7E3000/$7E3200）/ STX $09 / RTL
+  { uint8 t[] = { 0x18, 0x18, 0x18 }; PatchBytes(0xE38774, t, sizeof(t)); } // JSR $8767 (WaitForLagFrame)
+  { uint8 t[] = { 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0xE38777, t, sizeof(t)); } // JSL $808F0C (HandleMusicQueue)
+  { uint8 t[] = { 0x18, 0x18, 0x18, 0x18 }; PatchBytes(0xE3877B, t, sizeof(t)); } // JSL $8289EF (HandleSoundEffects)
 
   // Patch ToggleSaveConfirmationSelection
   { uint8 t[] = { 0x18, 0x18, 0x18 }; PatchBytes(0x858532, t, sizeof(t)); } // WaitForNMI_NoUpdate
