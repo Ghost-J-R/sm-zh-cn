@@ -36,7 +36,9 @@ static void MsgBox_CHS_880D(void) {  // $E3:880D（E38527 的子函数）
 }
 
 static void MsgBox_CHS_853A(void) {  // $E3:853A（E38527 的子函数）
-  // 按 message_box_index 从 E6A2B0 表（3 字节项 {lo,hi,bank}）做 4 段 VRAM DMA。
+  // 按 message_box_index 从 E6A2B0 表（3 字节项 {lo,hi,bank}）做 5 段 VRAM DMA。
+  // ROM 逐段：REP#$20/LDA $E6A2B0,X(16位)/ADC #$0xxx/STA $4312(16位)/LDA 大小/STA $4315/
+  // LDA VRAM/STA $2116/SEP#$20/LDA $E6A2B2,X/STA $4314/LDA #$02/STA $420B。
   if (!message_box_index)  // LDA $7E1C1F/BEQ（RTS）
     return;
   uint16 t = message_box_index - 1;                    // DEC
@@ -44,27 +46,35 @@ static void MsgBox_CHS_853A(void) {  // $E3:853A（E38527 的子函数）
   *(uint16 *)&g_ram[0xCC] = 0;                         // 尾部 LDA #$0000/STA $CC（16 位写同时清 $CD）
   const uint8 *b = RomFixedPtr(0xE6A2B0 + x);
   uint16 src = b[0] | (b[1] << 8);
-  // 段1：+0x80、0x60 字节、VRAM $42C0、bank E6A2B2[X]
+  // 段1：+0x80、0x60 字节、VRAM $42C0、bank b[2]
   WriteRegWord(A1T1L, src + 0x80);
   WriteRegWord(DAS1L, 0x60);
   WriteRegWord(VMADDL, 0x42C0);
   WriteReg(A1B1, b[2]);
   WriteReg(MDMAEN, 2);
-  // 段2：+0x200、0x60、VRAM $4380
+  // 段2：+0x100、0xD0、VRAM $4300
+  WriteRegWord(A1T1L, src + 0x100);
+  WriteRegWord(DAS1L, 0xD0);
+  WriteRegWord(VMADDL, 0x4300);
+  WriteReg(A1B1, b[2]);
+  WriteReg(MDMAEN, 2);
+  // 段3：+0x200、0x60、VRAM $4380
   WriteRegWord(A1T1L, src + 0x200);
   WriteRegWord(DAS1L, 0x60);
   WriteRegWord(VMADDL, 0x4380);
   WriteReg(A1B1, b[2]);
   WriteReg(MDMAEN, 2);
-  // 段3：+0x280、0x80、VRAM $43C0
+  // 段4：+0x280、0x80、VRAM $43C0
   WriteRegWord(A1T1L, src + 0x280);
   WriteRegWord(DAS1L, 0x80);
   WriteRegWord(VMADDL, 0x43C0);
   WriteReg(A1B1, b[2]);
   WriteReg(MDMAEN, 2);
-  // 段4：E6A307[X] 16 位源、0x190 字节、VRAM $4580（bank $4314 残留 E6 未写）
+  // 段5：E6A307[X] 16 位 + E6A308[X] 8 位拼 A1T1L/H、0x190 字节、VRAM $4580
+  // （A1B1 残留段4 的 b[2]；ROM $4313 的 8 位 STA 取 E6A308[X]，E6A309[X] 被丢弃）
   const uint8 *b2 = RomFixedPtr(0xE6A307 + x);
   WriteRegWord(A1T1L, b2[0] | (b2[1] << 8));
+  WriteReg(A1T1H, b2[1]);
   WriteRegWord(DAS1L, 0x190);
   WriteRegWord(VMADDL, 0x4580);
   WriteReg(MDMAEN, 2);
@@ -108,7 +118,10 @@ static void MsgBox_CHS_8774(void) {  // $E3:8774（$85:82B8 JSL 目标）：中�
     uint16 x = (uint16)(t + (uint16)(t << 1));          // ASL/CLC/ADC $CC（×3）
     const uint8 *e = RomFixedPtr(0xE6A35E + x);         // 3 字节指针表 {lo,hi,bank}
     uint32 src = e[0] | (e[1] << 8) | ((uint32)e[2] << 16);
-    memcpy(g_ram + 0x3200, RomFixedPtr(src), 0x300);    // 0x180 字（CPX #$180）
+    // 循环：LDX #$0000 / LDA [$CC] / STA $7E3200,X / INC $CC / INC $CC / INX / INX / CPX #$0180 / BNE
+    // X 步进 2 从 0 到 0x17E → 0xC0 次 16 位写 = 0x180 字节（$7E3200-$7E337F）。
+    // CPX #$0180 是字节计数而非字计数；DMA 大小输入 message_box_das0l_value 亦为 0x180 字节。
+    memcpy(g_ram + 0x3200, RomFixedPtr(src), 0x180);    // 0xC0 次 16 位写（CPX #$0180 字节计数）
     message_box_das0l_value = 0x180;      // STX $09（85831E DAS1L 的功能输入）
     *(uint16 *)&g_ram[0xCC] = 0;          // 尾部 LDA #$0000/STA $CC（16 位写同时清 $CD）
     g_ram[0xCE] = e[2];                   // 16 位 STA $CD 的溢出字节（LDA [dp] 指针的 bank 分量）
@@ -275,6 +288,7 @@ static void SetupMessageBoxBg3YscrollHdma(void) {  // 0x858363
 static void SetupPpuForActiveMessageBox(uint16 r52) {  // 0x85831E
   SetupMessageBoxBg3YscrollHdma();
   r52 += 22528;
+  *(uint16 *)&g_ram[0x34] = r52;  // ROM: ADC $34 / STA $34（$34 = VMADDL 基址回写，E3:880D 的 LDA $34-0x20 依赖）
   WriteRegWord(VMADDL, r52);
   WriteRegWord(DMAP1, 0x1801);
   WriteRegWord(A1T1L, ADDR16_OF_RAM(ram3000) + 512);
