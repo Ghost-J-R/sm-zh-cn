@@ -2577,13 +2577,6 @@ void EquipmentScreenTransferBG1Tilemap(void) {  // 0x82AC22
   SetupDmaTransfer(&unk_82AC3B);
   WriteReg(MDMAEN, 2);
   reg_BG1VOFS = 0;
-  // CHS: JSL $E3820A（$82:AC52 原 LDA $0755/AND #$FF 被替换）——JSR $E38334：若装备类别
-  // 或储备血量低字节非零且装备类别低字节 != $C6 → $C6=装备类别低字节、$C4=0xCD（M=8 低字节语义）。
-  if (((pausemenu_equipment_category_item & 0xFF) != 0 || (samus_max_reserve_health & 0xFF) != 0)
-      && (uint8)pausemenu_equipment_category_item != (uint8)g_word_7E00C4[1]) {
-    g_word_7E00C4[1] = (g_word_7E00C4[1] & 0xFF00) | (pausemenu_equipment_category_item & 0xFF);
-    g_word_7E00C4[0] = 0xCD;
-  }
 }
 static Func_V *const kEquipmentScreenCategories[4] = {  // 0x82AC4F
   EquipmentScreenCategory_Tanks,
@@ -2591,7 +2584,79 @@ static Func_V *const kEquipmentScreenCategories[4] = {  // 0x82AC4F
   EquipmentScreenCategory_Suit,
   EquipmentScreenCategory_Boots,
 };
+// ===== CHS 补丁：装备界面主循环钩子（$82:AC52 每帧 JSL $E3820A）=====
+// 结构：JSR $E38334（类别/储备血量变化→$C6=$0755、$C4=0xABCD，全 16 位）
+//       + JSR $E3825B（$C4==0xABCD 时按类别读 E4 表项 {lo,hi,bank}，DMA 0x600 字节中文类别图形→VRAM 0x1400）
+//       + LDA $0755/AND #$00FF（原 $82:AC52 语义，供后续 ASL/TAX 分派；C 侧无寄存器语义）。
+// 注意：$CC/$CD/$CE 在 0x00CC-0x00CF 连续——82BE 的 LDA $CD 在 M=16 下读 {0x00CD,0x00CE}
+//       两字节（$CC 高字节 + $CE 低字节），随后 16 位 STA $4313 写 {4313,4314} = 表项 {hi,bank}；
+//       即 DMA 源 bank = 表项第 3 字节（$CE 低字节）。82BE 不写 $4310/$2115（沿用 E38352 残留），
+//       故逐寄存器写。
+void CHS_EquipmentScreenMain_Hook(void) {
+  uint16 r755 = pausemenu_equipment_category_item;
+  uint16 r9d4 = samus_max_reserve_health;
+  // --- JSR $E38334 ---
+  if ((r755 != 0 || r9d4 != 0) && r755 != g_word_7E00C4[1]) {
+    g_word_7E00C4[1] = r755;      // STA $C6（16 位）
+    g_word_7E00C4[0] = 0xABCD;    // LDA #$ABCD / STA $C4（16 位）
+  }
+  // --- JSR $E3825B ---
+  if (g_word_7E00C4[0] != 0xABCD)
+    return;                       // LDA $C4 / EOR #$ABCD / BNE $82BD
+  g_word_7E00C4[0] = 0;           // STA $C4
+  if (r755 == 0 && r9d4 == 0)
+    return;                       // LDA $0755/BNE + LDA $09D4/BNE 均失败 → BRA $82BD
+  // LDA $7E0756 / AND #$00FF / STA $CC（16 位写：$CC=HIBYTE、0x00CD=0）
+  uint16 cc = HIBYTE(r755);
+  *(uint16 *)(g_ram + 0xCC) = cc;
+  uint16 x = 3 * cc;              // ASL / CLC / ADC $CC / TAX
+  uint16 a = r755 & 0xFF;         // PLA（压栈值 = $0755 & #$00FF）
+  uint16 dma_a = a;               // 82BE 的 STA $4312 用 A；默认（不读表）=类别值
+  uint32 tbl = 0;
+  int read_table = 0;
+  switch (a) {
+    case 0:                       // JSR $82DC
+      if (x == 3 || reserve_health_mode == 1 || reserve_health_mode == 2) {
+        if (reserve_health_mode == 2)
+          x = 6;                  // LDX #$0006
+        tbl = 0xE4E600;
+        read_table = 1;
+      } else {
+        dma_a = reserve_health_mode;  // BRA $8303：A 残留 = $09C0（CMP #$0002 后）
+      }
+      break;
+    case 1: tbl = 0xE4E609; read_table = 1; break;   // JSR $8304
+    case 2: tbl = 0xE4E618; read_table = 1; break;   // JSR $8314
+    case 3: tbl = 0xE4E62A; read_table = 1; break;   // JSR $8324
+    default: break;               // BRA $82B6：不读表、不 DMA
+  }
+  if (read_table) {
+    *(uint16 *)(g_ram + 0xCE) = (uint8)GET_WORD(RomPtr(tbl) + x + 2);  // LDA 表[X+2] / AND #$00FF / STA $CE
+    cc = GET_WORD(RomPtr(tbl) + x);                                    // LDA 表[X] / STA $CC（{lo,hi}）
+    *(uint16 *)(g_ram + 0xCC) = cc;
+    dma_a = cc;                   // A = $CC
+  }
+  if (a <= 3) {                   // 82B3: JSR $82BE（类别 0-3 无条件执行）
+    // STA $4312=A（16 位）/ LDA $CD（M=16：读 {0x00CD,0x00CE} 两字节 = $CC 高字节 + $CE 低字节）
+    // / STA $4313（16 位写 {4313,4314} = {$CC 高字节, $CE 低字节}——即表项 {lo,hi,bank} 的 hi 与 bank）
+    // / LDA #$0600 / STA $4315 / LDA #$1400 / STA $2116 / SEP #$20 / LDA #$02 / STA $420B / REP #$20
+    WriteReg(A1T1L, dma_a & 0xFF);
+    WriteReg(A1T1H, dma_a >> 8);
+    WriteReg(A1T1H, g_ram[0xCD]);
+    WriteReg(A1B1, g_ram[0xCE]);
+    WriteReg(DAS1L, 0);
+    WriteReg(DAS1H, 0x06);
+    WriteReg(VMADDL, 0);
+    WriteReg(VMADDH, 0x14);
+    WriteReg(MDMAEN, 2);
+  }
+  // 82B6: LDA #$0000 / STA $CE / STA $CC
+  *(uint16 *)(g_ram + 0xCE) = 0;
+  *(uint16 *)(g_ram + 0xCC) = 0;
+}
 void EquipmentScreenMain(void) {
+  // CHS: $82:AC52 = JSL $E3820A（原版此处 LDA $0755/AND #$FF；钩子末尾保留该语义）
+  CHS_EquipmentScreenMain_Hook();
   kEquipmentScreenCategories[(uint8)pausemenu_equipment_category_item]();
   EquipmentScreenDrawItemSelector();
   EquipmentScreenDisplayReserveTankAmount();
@@ -2918,11 +2983,11 @@ void EquipmentScreenCategory_Boots_MoveResponse(void) {  // 0x82B160
 
 void WriteSamusWireframeTilemapAndQueue(void) {  // 0x82B1E0
   WriteSamusWireframeTilemap();
-  // CHS: JSL $E38217（$82:B1E6 原 LDX $0330/LDA #$00 被替换）——若装备类别或储备血量低字节
-  // 非零：$E4:E633/$E4:E645 各 9 字节 → $7E3D84/$7E3DC4（JSR $8235/$8248，M=8 逐字节）；
+  // CHS: JSL $E38217（$82:B1E6 原 LDX $0330/LDA #$00 被替换）——若 $0755 或 $09D4（16 位）
+  // 非零：$E4:E633/$E4:E645 各 18 字节 → $7E3D84/$7E3DC4（JSR $8235/$8248，9 次 16 位拷贝，CPX #$0012）；
   // 钩子末尾 LDX $0330/LDA #$00 与原版一致。
-  if ((pausemenu_equipment_category_item & 0xFF) != 0 || (samus_max_reserve_health & 0xFF) != 0) {
-    for (int i = 0; i < 9; i++) {
+  if (pausemenu_equipment_category_item != 0 || samus_max_reserve_health != 0) {  // 16 位非零测试
+    for (int i = 0; i < 18; i++) {  // CPX #$0012 → 9 次 16 位拷贝 = 18 字节
       g_ram[0x3D84 + i] = *(uint8 *)RomPtr(0xE4E633 + i);
       g_ram[0x3DC4 + i] = *(uint8 *)RomPtr(0xE4E645 + i);
     }

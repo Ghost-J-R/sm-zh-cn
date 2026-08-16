@@ -1,4 +1,4 @@
-# 统一验证记录：交互游玩暴露的八处 CHS 移植缺陷与修复
+# 统一验证记录：交互游玩暴露的九处 CHS 移植缺陷与修复
 
 > 提交：`185df46`（Bug 1-3）、`fa5ad00`（Bug 4）、`4e8603a`+`25f1136`（Bug 5-6）、`989583f`（消息框崩溃）、`8f4d709`（Bug 7）、`02d6c5b`（Bug 8）
 > 验证日期：2026-08-15 ～ 2026-08-16
@@ -232,7 +232,7 @@ r20 = pt.x;
 
 ---
 
-## 8. Bug 8：拿变形球后道具提示框——中文消息框三处移植错误
+## 9. Bug 8：拿变形球后道具提示框——中文消息框三处移植错误
 
 ### 现象
 
@@ -276,7 +276,61 @@ r20 = pt.x;
 
 ---
 
-## 9. 验证方式与结果
+## 10. Bug 9：获得变形球后按 Start+R 进入装备界面——中文装备界面三处钩子转录错误
+
+### 现象
+
+- 获得变形球后，按 Start 再按 R 切到装备界面：帧 8909 起失配（快照 bug-1786870014.sav，帧 8910 前 theirs 状态）；
+- **无任何能力时不报错**（用户实测）——装备类别 `$7E0755=0` 且储备血量上限 `$7E09D4=0` 时，CHS 三个装备钩子条件全不成立、路径跳过；拿到变形球后 `$0755=0x0202` 非零，钩子激活；
+- @8909（Load 帧）：RAM `0x00C4` mine=0x00CD theirs=0x0000、`0x00C6` mine=0x0002 theirs=0xFFFF；
+- @8940（装备界面主循环首帧，与 Load 帧差 31 帧 = fade 时长）：`0x00C6` mine=FFFF theirs=0202、`0x00CE` mine=0x00E5 theirs=0；`0x3D8D-0x3D95` 与 `0x3DCD-0x3DD5`（mine 全 0、theirs 为中文道具名 tilemap 字 0x5021/0x5121/0x5A21/0x5B21 与 0x6421/0x6521/0x6621/0x6721）；VRAM `0x1400-0x14BF`（mine=0x03FF、theirs=0x3838）。
+
+### 检查方式
+
+1. 快照解析 `ramOff=153100` + AUTOLOAD 帧 200 加载：帧 200/231 与原始 8909/8940 逐字节同构（差 31 帧 = 装备界面 fade）；
+2. theirs 侧 PC 断点（cpu.c `cpu_runOpcode` 挂 0xE3820A/825B/82BE/8217/8334/8352/8366，`runningWhichVersion==1`）——TRACE 实测帧 231 序列 820A→8334（C6=0202/C4=ABCD）→825B（消费）→82BE（DMA）→8217；
+3. ROM 反汇编 E3 三钩子 + E4:E600 表区 + E633/E645 文本数据逐字节对照；
+4. snes.c `snes_write` 挂 0x4314 写断点——发现 theirs 帧 231 在 `pc=E3:82C6` 写 `$4314=0xE4`。
+
+### 根因（三处转录错误 + 一处转录位置错，均属 CHS 装备界面扩展路径）
+
+ROM 侧（bank E3，JSL 调用点各唯一）：
+
+- `$82:AB4A`→JSL `$E38352`（SetupReserveMode 开头）：`$C4=0/$C6=FFFF` + 两个 DMA——C 转录正确；
+- `$82:AC52`→JSL `$E3820A`：位于 **0x82AC4F=EquipmentScreenMain（每帧执行）**，= JSR `$E38334` + JSR `$E3825B` + `LDA $0755/AND #$FF`；
+- `$82:B1E6`→JSL `$E38217`（WriteSamusWireframeTilemapAndQueue 内）：18 字节×2 中文文本拷贝。
+
+五处错误：
+
+1. **转录位置错**：E38334 转录被放在 `EquipmentScreenTransferBG1Tilemap`（仅 Load 帧执行 1 次）；ROM 中 `$82:AC52` 在 EquipmentScreenMain（每帧）。帧 8909（Load 帧）mine 提前写 `$C4/$C6` → @8909 失配；
+2. **E38334 语义 8 位 vs 16 位**：ROM 为 `$C6=$0755` 全 16 位写、`$C4=0xABCD` 全字——旧转录只写低字节（`$C6` 保留高字节、`$C4=0x00CD`）；
+3. **漏 JSR $E3825B 完整逻辑**：类别变化时按类别读 E4:E600 表（3 字节项 `{lo,hi,bank}`，X=3×HIBYTE($0755)，类别基址 E600/E609/E618/E62A；类别 0 还有 reserve 检查与 X=6 调整），随后 82BE 把 `0x600` 字节中文类别图形 DMA 到 VRAM 0x1400、`$CE/$CC` 清零——@8940 的 `$C6/$CE/VRAM` 失配直接原因；
+4. **82BE 的 M=16 语义**：`LDA $CD`（M=16）读 `{0x00CD,0x00CE}` 两字节 = `$CC` 高字节 + `$CE` 低字节；随后 `STA $4313`（16 位）写 `{4313,4314}`——**DMA 源 bank = $4314 = 表项第 3 字节（$CE 低字节）**。类别 2 项 2（X=6）= `{00,BC,E4}` → 源 **E4:BC00**（=0x3838，theirs VRAM 值）。首版转录按 8 位只写 `$4313`、漏 `$4314`，mine 沿用残留 bank 0x7E → 源 WRAM 7E:BC00（=0x03FF，mine VRAM 值）；
+5. **E38217 拷贝 9 字节 vs 18 字节** + 条件 8 位 vs 16 位：ROM `JSR $8235/$8248` 各为 `CPX #$0012` 的 9 次 16 位拷贝 = 18 字节（E633→7E:3D84、E645→7E:3DC4）；旧转录只拷 9 字节且条件用 `&0xFF`——0x3D8D/0x3DCD 失配直接原因。
+
+### 为什么原版/sm-main 没有这个 bug
+
+装备界面中文类别图形与中文道具名渲染全部是**汉化专属**：三个 JSL 替换点（$82:AB4A/AC52/B1E6）与 bank E3 钩子（E38352/E3820A/E38217）在原版 ROM 不存在，sm-main 无此路径。全部错误是 cn 移植者转录汉化 ROM 时引入的（theirs 忠实执行 ROM 恒为正确侧）。"无能力不报错"是因为钩子条件（`$0755!=0 || $09D4!=0`）在空装备界面恒假。
+
+### 修复
+
+`src/sm_82.c`（提交 `02d6c5b` 之后的装备界面专项）：
+
+1. 新增 `CHS_EquipmentScreenMain_Hook()`：完整转录 `$E3:820A`——JSR $E38334（16 位 `$C6/$C4=0xABCD`）+ JSR $E3825B（`$C4==0xABCD` 消费、`$CC=HIBYTE($0755)`、X=3×HIBYTE、类别 0-3 表分派含类别 0 的 reserve 怪路径、`$CE/$CC` 清零）+ JSR $82BE（**逐寄存器** 16 位语义：`A1T1L/A1T1H=$CC 字`、`A1T1H=g_ram[0xCD]`、`A1B1=g_ram[0xCE]`、`DAS1=0x600`、VMADDL=0x1400、MDMAEN=2；不碰 $4310/$2115 残留）；
+2. `EquipmentScreenMain()` 开头调用该钩子（对应 ROM `$82:AC52` 的 JSL，每帧）；
+3. 删除 `EquipmentScreenTransferBG1Tilemap` 中错位的 E38334 转录，恢复原版函数；
+4. `WriteSamusWireframeTilemapAndQueue` 的 E38217 转录：条件改 16 位非零测试、拷贝 9→18 字节。
+
+### 验证
+
+- AUTOLOAD bug-1786870014.sav 帧 200 分阶段验证：移走 hook2 转录 → 帧 200（原 8909）RAM 失配先消；补 825B DMA + 18 字节 → 帧 231（原 8940）RAM 失配全消（剩 VRAM 0x1400）；82BE 改 16 位（$4314=$CE 低字节）→ **VRAM 0x1400 失配消除**；
+- 0x4314 写断点复核：帧 231 双方都写 `$4314=0xE4`（theirs pc=E3:82C6、mine 转录等价）→ DMA 源 E4:BC00 一致；
+- 最终：sm-diag.txt **0 字节**（帧 200/231 零失配）、无新 bug 快照生成、装备界面稳定态（帧 1883+）持续零失配；
+- 全部临时插桩（cpu.c 断点/snes.c 0x4314 断点/sm_rtl.c AUTOLOAD/sm_82.c 打印）已移除，git diff 仅 sm_82.c。
+
+---
+
+## 11. 验证方式与结果
 
 | 验证项 | 方法 | 结果 |
 |---|---|---|
@@ -287,12 +341,13 @@ r20 = pt.x;
 | Bug 6 修复 | 14 秒启动冒烟 + 8 个补丁地址常量二进制校验 | 进程存活、diag 0 字节、常量全部命中 |
 | Bug 7 修复 | bug-1786850061.sav AUTOLOAD 帧 200 双向验证（修复前复现/修复后复测） | 修复前 mine=0xFC vs theirs=0x94；修复后 r18=0x98、零失配 |
 | Bug 8 修复 | bug-1786866299.sav AUTOLOAD 帧 200 逐阶段验证（8774→853A→$34 回写三步递进） | RAM 失配 → VRAM 0x4300 → 全部消除；最终零失配（diag 0 字节） |
+| Bug 9 修复 | bug-1786870014.sav AUTOLOAD 帧 200 逐阶段验证（hook2 移位→825B DMA→18 字节→82BE 16 位） | 帧 200 RAM 失配消 → 帧 231 RAM 消 → VRAM 0x1400 消；最终零失配（diag 0 字节、无新快照） |
 | 启动回归 | 60 秒无人值守 boot（标题 + 开场） | sm-diag.txt 0 字节 |
 | 最终手动回归 | 用户完整流程：标题 → 存档选择 → slot 1 → 选项菜单 → 开场文字 → 飞船场景 → Zebes → 暂停地图 → 变形球消息框 → 撤离开火 | **零失配**（0 字节 diag） |
 
 ---
 
-## 10. 本次调查沉淀的可复用工具与陷阱
+## 12. 本次调查沉淀的可复用工具与陷阱
 
 ### 6.1 bug 快照（.sav）解析格式
 
@@ -344,18 +399,26 @@ sramOff = ramOff - 51 - 8192
 - **快照帧号与 AUTOLOAD 帧号的 off-by-one**：`snes_frame_counter++` 在 RunFrame 之后——AUTOLOAD 注入点帧 N 加载后，失配报告帧号 = N（加载后第一帧），theirs 执行时计数器 = N（尚未 ++）；
 - **协程恢复语义**：快照的 `coroutine_state_3`（0x614）决定消息框协程从哪续行；本 bug 中快照 cst3=0 → 双方都从 DisplayMessageBox_Async 头部执行，差异只在函数体内。
 
+### 6.7 装备界面 CHS 钩子的移植核对要点（Bug 9 沉淀）
+
+- **"LDA $CD → DMA bank"的直觉是错的**：82BE 的 `LDA $CD` 在 M=16 下读 `{0x00CD,0x00CE}` **两字节**（$CC 高字节 + $CE 低字节，三变量 0x00CC-0x00CF 连续），随后 `STA $4313` 16 位写 `{4313,4314}`——**DMA bank = $4314 = 表项第 3 字节**。转录寄存器副作用必须按 M 标志逐条核对字节流，不能按"意图"推断；
+- **DMA 残留寄存器敏感**：82BE 不写 $4310/$2115/$4314 的初值依赖此前 DMA 残留（hook1 设 0x1801/0x80）——转录 82BE 必须逐寄存器 `WriteReg`，**不能**用 `SetupDmaTransfer`（它会重写 $4310/$4314，破坏残留语义）；hook1 自身用 SetupDmaTransfer 恰与 ROM 等价（已逐字节核对）；
+- **钩子调用点归属必须看 ROM 字节**：`$82:AC52` 属于 EquipmentScreenMain（0x82AC4F 起）还是 TransferBG1Tilemap（0x82AC22 起）只有 dump ROM 才能确认——按函数名猜位置导致"每帧 vs Load 帧"的时序错位（@8909 失配的直接原因）；
+- **补丁作者的 M 标志错误会被模拟器忠实执行**：hook1 的 `A9 B6 8D 13 43` 在 M=16 下解析为 `LDA #$8DB6` + `ORA ($43,S),Y`（作者按 M=8 书写）——theirs 执行的是垃圾代码的**实际效果**（$4313/$4314 保持 STA $4312 的高字节），转录照搬最终寄存器效果而非"作者意图"；
+- **W4314 类 IO 写断点**（snes_write 挂 0x4300-0x437F 单地址 + 帧号/版本/PC 打印）能直接区分"DMA 没执行"与"执行了但 bank 残留不同"——本次 VRAM 0x1400 失配即靠它锁定 mine 漏写 $4314。
+
 ---
 
-## 11. 变更文件清单
+## 13. 变更文件清单
 
 | 文件 | 改动 |
 |---|---|
-| `src/sm_82.c` | OptionsMenuFunc4：两处 `OptionsMenuFunc5(..., 0x2C8, 0x18)` → `0x32` + 注释（Bug 1）；CHS_MapScreen_* 六个函数（Bug 5a） |
+| `src/sm_82.c` | OptionsMenuFunc4：两处 `OptionsMenuFunc5(..., 0x2C8, 0x18)` → `0x32` + 注释（Bug 1）；CHS_MapScreen_* 六个函数（Bug 5a）；CHS_EquipmentScreenMain_Hook 新增 + EquipmentScreenMain 每帧调用 + TransferBG1Tilemap 错误转录删除 + WriteSamusWireframeTilemapAndQueue 18 字节/16 位条件（Bug 9） |
 | `src/sm_8b.c` | Func20：补 4 条 DP 副作用写入 + 注释（Bug 2）；Func54 / BlackoutFromCeres：`DecompressToMem(0xE78080, ...)` → `0xE78000` + 注释（Bug 3） |
 | `src/sm_93.c` | DrawBombAndProjectileExplosions：接回 CalcExplosion_Mode7 返回值（Bug 4）；DrawPlayerExplosions2：`v3 = r18 = pt.y`（Bug 7） |
 | `src/sm_cpu_infra.c` | stub 重定位 F8B6 + 消息框补丁重对齐 + E3 内部补丁（Bug 5b/6） |
 | `src/sm_rtl.c` | LoadSnesState 重定向常量 F8BD（Bug 5b）；栈返回平移垫片移除（25f1136） |
 | `src/sm_85.c` | 消息框六处转录副作用镜像（Bug 6）；MsgBox_CHS_8774 拷贝 0x180 字节 + MsgBox_CHS_853A 五段 DMA + SetupPpuForActiveMessageBox `$34` 回写（Bug 8） |
-| `saves/` | 旧 stub 时代 15 份 bug-*.sav 作废删除（25f1136）；新快照 bug-1786784933/1786796724/1786850061/1786850077/1786866299.sav 保留 |
+| `saves/` | 旧 stub 时代 15 份 bug-*.sav 作废删除（25f1136）；新快照 bug-1786784933/1786796724/1786850061/1786850077/1786866299/1786870014.sav 保留 |
 
 全部调试插桩（sm_rtl.c、sm_81.c、sm_90.c、sm_94.c、sm_8b.c、sm_93.c 的临时打印）已移除，工作树与 HEAD 一致。
