@@ -189,8 +189,11 @@ void DrawPlayerExplosions2(void) {  // 0x938254
       v3 = projectile_y_pos[v1] - layer1_y_pos;
       r18 = v3;
     } else {
+      // fa5ad00 同款缺陷在此函数的残留：ROM $93:82B3 为 JSL $8B8AD9 → LDA $12（$12=y），
+      // 后续 $82CD 检查 $12、$818A4B 用 $12 作绘制 y——C 侧必须同步 r18，否则 r18 保持 0
+      // 被当作绘制 y 传入（检查用的 v3 屏内值通过后，绘制写 y=0+spritemap 偏移 → Y=0xFC）。
       Point16U pt = CalcExplosion_Mode7(v0);
-      v3 = pt.y;
+      v3 = r18 = pt.y;
       r20 = pt.x;
     }
     if ((v3 & 0xFF00) == 0 && (projectile_spritemap_pointers[v1] & 0x8000) != 0) {
