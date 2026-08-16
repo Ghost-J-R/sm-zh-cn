@@ -81,14 +81,14 @@ static void MsgBox_CHS_853A(void) {  // $E3:853A（E38527 的子函数）
 }
 
 static void MsgBox_CHS_8615(void) {  // $E3:8615（E38527 的子函数）
-  // 消息框类型 2-6/0D/13 → 按 $C8 从 E6A3B5/E6A3CD 表做 4 段 DMA。
-  // ROM：LDY $C8/DEC/ASL/ASL/ASL → X=($C8-1)*8 只索引 E6A3CD 表（段间 INX INX）；
+  // 消息框类型 2-6/0D/13 → 按 A（=mi）索引 E6A3CD 表、按 $C8 索引 E6A3B5/B6/B7 表做 4 段 DMA。
+  // ROM：LDY $C8 / DEC A / ASL / ASL / ASL → X=(mi-1)*8 只索引 E6A3CD 表（段间 INX INX）；
   //      B5/B6/B7 表用 TYA/LSR/TAX 的常量索引 $C8>>1（每段仅地址值 +0x10i）。
   uint16 mi = message_box_index;
   if (mi != 2 && mi != 3 && mi != 4 && mi != 5 && mi != 6 && mi != 0xD && mi != 0x13)
     return;  // JMP $8704（PLY/PLX/RTS）
   uint16 c8 = *(uint16 *)&g_ram[0xC8];                      // LDY $C8
-  uint16 x = (uint16)((c8 - 1) * 8);                        // DEC/ASL/ASL/ASL
+  uint16 x = (uint16)((mi - 1) * 8);                        // DEC A / ASL / ASL / ASL——E6A3CD 索引用 A（=入口 mi）；Y（=$C8）只用于下方 TYA/LSR
   const uint8 *t = RomFixedPtr(0xE6A3B5 + (c8 >> 1));       // 98 4A AA → BF B5 A3 E6（常量索引）
   for (int i = 0; i < 4; i++) {
     uint16 xi = (uint16)(x + i * 2);                        // 段间 INX INX
@@ -323,8 +323,12 @@ static void DrawSpecialButtonAndSetupPpuForLargeMessageBox(uint16 a) {
       }
     }
   }
-  *(uint16 *)((uint8 *)&ram3000.pause_menu_map_tilemap[256] + kMsgBoxSpecialButtonTilemapOffs[message_box_index - 1]) = kTileNumbersForButtonLetters[v1 >> 1];
-  MsgBox_CHS_87DA((a & 0x10) ? 0x0C : 0x0E);  // CHS: 85840C 原版单 tile 写 → JSL $E387DA + JMP $841D（ROM: A0 0C 00/A0 0E 00 = LDY #$000C/#$000E）
+  // 原版此处：kTileNumbersForButtonLetters[v1>>1] 写按钮字母 tile（覆盖 $7E332A 区字符）。
+  // CHS: 85840C 原版单 tile 写 → JSL $E387DA + JMP $841D——按钮字母 tile 写被 87DA 的
+  // 4 个边角 tile（E6A4EF 表）替代，原版写不再执行（kTileNumbersForButtonLetters 仅保留对照）。
+  // ROM 83D2 起按位序选 y：BIT #$0080(A)/#$8000(B)/#$0040(X)/#$4000(Y)/#$2000(Select)/#$0020(L)/#$1000(Start)
+  // → y=0/2/4/6/8/0xA/0xC，默认 0xE——与上面 v1 的位序完全一致，v1 即 ROM 的 y（840D: JSL $E387DA）。
+  MsgBox_CHS_87DA(v1);
   SetupPpuForActiveMessageBox(416);
 }
 

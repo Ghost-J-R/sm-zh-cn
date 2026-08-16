@@ -1,4 +1,4 @@
-# 统一验证记录：交互游玩暴露的九处 CHS 移植缺陷与修复
+# 统一验证记录：交互游玩暴露的十处 CHS 移植缺陷与修复
 
 > 提交：`185df46`（Bug 1-3）、`fa5ad00`（Bug 4）、`4e8603a`+`25f1136`（Bug 5-6）、`989583f`（消息框崩溃）、`8f4d709`（Bug 7）、`02d6c5b`（Bug 8）
 > 验证日期：2026-08-15 ～ 2026-08-16
@@ -330,7 +330,48 @@ ROM 侧（bank E3，JSL 调用点各唯一）：
 
 ---
 
-## 11. 验证方式与结果
+## 11. Bug 10：拿到导弹后消息框——三处转录错误（按钮位序/DEC A 语义/原版 tile 写残留）
+
+### 现象
+
+- 拿到导弹、消息框（框 9，随后切到框 2 的保存确认类路径）弹出瞬间：帧 11362 失配（快照 bug-1786874239.sav，帧 11363 前 theirs 状态）；
+- @11362 首帧：RAM `0x00C8` mine=0x2A theirs=0x0C、`0x32E9/0x32EB`（0x28 vs 0x2C）、`0x3329`（0xF728 vs 0x7E2C）、`0x332B`；VRAM `0x38D8`/`0x3C4E`/`0x43D9+`（mine=FFFF、theirs=数据）与 `0x0000-0x0006`（mine=BDFF/9BFF/…、theirs=CE31/FFD9/…，BG1 tilemap 头部）；
+- @11363 起大面积发散（消息框动画状态 0x05A3/0x05E5、OAM 区 0x0643+ 等）——首帧失配的级联。
+
+### 检查方式
+
+1. 快照解析 ramOff=153434，字段：mbox(0x1C1F)=09、queued=0、cst3=0、`09B2=0040`（shoot 键配置含 X 键）、`$34=0004`；
+2. AUTOLOAD 帧 200 复现 + theirs 侧 PC 断点（E38774/87DA/880D/853A/8615/8645/864B/8656）+ snes_write 0x2116（VMADDL）双侧追踪；
+3. ROM 反汇编：E3:87DA（`STY $C8/TYA/ASL/CLC/ADC $C8/STA $C8`→$C8=3y）、85:83C6-8411（y 的 8 档位序）、E3:8615（`LDY $C8/DEC A/ASL×3/TAX`）、E3:8774 拷贝循环、E6A2B0/A35E/A3B5/A3CD/A4B5/A4EF 各表逐字节核对。
+
+### 根因（三处，全部是 CHS 消息框扩展路径的转录错误）
+
+1. **87DA 的 y 参数二选一**：ROM 85:83D2 起按位序选 y——`BIT #$0080(A)/#$8000(B)/#$0040(X)/#$4000(Y)/#$2000(Select)/#$0020(L)/#$1000(Start)` → y=0/2/4/6/8/0xA/0xC、默认 0xE（与 C 的 v1 计算位序完全一致）；旧转录 `(a & 0x10) ? 0x0C : 0x0E` 是二选一残渣。用户 shoot=X 键（0x40）→ theirs y=4（$C8=0x0C）、mine y=0x0E（$C8=0x2A）——`$C8` 与边角 tile（E6A4EF[y>>1]，0x2C vs 0x28）失配；
+2. **8615 的 `DEC A` 误读为 DEC Y**：ROM `LDY $C8 / DEC A / ASL / ASL / ASL / TAX`——E6A3CD 索引 = **(mi-1)*8**（A 在 8619 `LDA $7E1C1F` 后 = mi）；旧转录 `(c8-1)*8` 用 $C8。mine 的 X=88 读表越界（E6A3CD 前 8 项为 FF 占位）→ VMADDL=0xFFFF → **0x10 字节 DMA 环绕写 BG1 tilemap 头 0x0000-0x000F**；theirs 的 X=8 → 目标 0x43D8/43E0/43E8/43F0——VRAM 0x0000 与 0x43D9 两组失配的直接原因；
+3. **原版按钮字母 tile 写残留**：CHS 把 85:840C 原版的 `kTileNumbersForButtonLetters` 单 tile 写（覆盖 $7E332A 区字符）替换为 `JSL $E387DA`（87DA 的 4 个边角 tile 替代按钮字母 tile）；C 转录保留了原版写（0x2CF7 → 0x332A），theirs 无此写（0x332A 保持 8774 拷贝的 0x7E）——0x332A 与 VRAM 0x5A35（RAM 0x3295 经 SetupPpu DMA）失配的直接原因。
+
+### 为什么原版/sm-main 没有这个 bug
+
+三处全部是**汉化专属路径**：87DA/8615 位于扩展 bank E3（原版不存在），85:840C 的 JSL 替换点与原版 `STA` 不同。sm-main 无此代码。theirs 忠实执行 ROM 恒为正确侧。
+
+### 修复
+
+`src/sm_85.c`：
+
+1. `MsgBox_CHS_87DA(v1)`——y 直传 v1（8 档位序与 ROM 一致）+ 位序注释；
+2. `MsgBox_CHS_8615`：`uint16 x = (uint16)((mi - 1) * 8);`——DEC A 语义 + 注释（Y=$C8 只用于 B5/B6/B7 表的 TYA/LSR）；
+3. `DrawSpecialButtonAndSetupPpuForLargeMessageBox`：删除原版 `kTileNumbersForButtonLetters` tile 写 + 注释（CHS 被 87DA 替代）。
+
+### 验证
+
+- AUTOLOAD bug-1786874239.sav 帧 200 分阶段验证：修 y → `$C8/32E9/32EB/332B` 消（剩 0x332A+VRAM）；修 8615 的 x → VRAM 0x0000/0x43D9 消（剩 0x332A+VRAM 0x5A35 同源一对）；删按钮 tile 写 → **全部消除**；
+- 双侧插桩复核：TV 追踪 mine 的 8615 目标从 FFFF→43D8 系、0x332A 从 0x2CF7→0x7E 与 theirs 对齐；TX 断点实测 theirs 的 `DEC A` 路径（A=2→8、Y=0x0C 不变）；
+- 最终：sm-diag.txt **0 字节**（帧 200 零失配）、无新 bug 快照、消息框后续帧持续零失配；
+- 全部临时插桩（cpu.c TH/TX 断点、snes.c TV 断点、sm_85.c MN 打印、sm_rtl.c AUTOLOAD）已移除，git diff 仅 sm_85.c。
+
+---
+
+## 12. 验证方式与结果
 
 | 验证项 | 方法 | 结果 |
 |---|---|---|
@@ -342,12 +383,13 @@ ROM 侧（bank E3，JSL 调用点各唯一）：
 | Bug 7 修复 | bug-1786850061.sav AUTOLOAD 帧 200 双向验证（修复前复现/修复后复测） | 修复前 mine=0xFC vs theirs=0x94；修复后 r18=0x98、零失配 |
 | Bug 8 修复 | bug-1786866299.sav AUTOLOAD 帧 200 逐阶段验证（8774→853A→$34 回写三步递进） | RAM 失配 → VRAM 0x4300 → 全部消除；最终零失配（diag 0 字节） |
 | Bug 9 修复 | bug-1786870014.sav AUTOLOAD 帧 200 逐阶段验证（hook2 移位→825B DMA→18 字节→82BE 16 位） | 帧 200 RAM 失配消 → 帧 231 RAM 消 → VRAM 0x1400 消；最终零失配（diag 0 字节、无新快照） |
+| Bug 10 修复 | bug-1786874239.sav AUTOLOAD 帧 200 逐阶段验证（y=v1→8615 的 DEC A→删按钮 tile 写） | $C8/边角 tile 消 → VRAM 0x0000/0x43D9 消 → 0x332A/0x5A35 消；最终零失配（diag 0 字节、无新快照） |
 | 启动回归 | 60 秒无人值守 boot（标题 + 开场） | sm-diag.txt 0 字节 |
 | 最终手动回归 | 用户完整流程：标题 → 存档选择 → slot 1 → 选项菜单 → 开场文字 → 飞船场景 → Zebes → 暂停地图 → 变形球消息框 → 撤离开火 | **零失配**（0 字节 diag） |
 
 ---
 
-## 12. 本次调查沉淀的可复用工具与陷阱
+## 13. 本次调查沉淀的可复用工具与陷阱
 
 ### 6.1 bug 快照（.sav）解析格式
 
@@ -407,9 +449,17 @@ sramOff = ramOff - 51 - 8192
 - **补丁作者的 M 标志错误会被模拟器忠实执行**：hook1 的 `A9 B6 8D 13 43` 在 M=16 下解析为 `LDA #$8DB6` + `ORA ($43,S),Y`（作者按 M=8 书写）——theirs 执行的是垃圾代码的**实际效果**（$4313/$4314 保持 STA $4312 的高字节），转录照搬最终寄存器效果而非"作者意图"；
 - **W4314 类 IO 写断点**（snes_write 挂 0x4300-0x437F 单地址 + 帧号/版本/PC 打印）能直接区分"DMA 没执行"与"执行了但 bank 残留不同"——本次 VRAM 0x1400 失配即靠它锁定 mine 漏写 $4314。
 
+### 6.8 消息框钩子的转录核对要点（Bug 10 沉淀）
+
+- **旧转录注释不可信，DEC/ASL 的操作数必须逐字节核对**：8615 的注释写着"LDY $C8/DEC/ASL/ASL/ASL"，实际 `3A` 是 **DEC A** 而非 DEC Y——转录者按"索引用 C8"的意图误判操作数。双侧 PC 断点（TAX 处打印 A/Y/X）是最快的裁决手段；
+- **"二选一"转录常是 8 档位序的残渣**：87DA 的 y 在 ROM 中是 A/B/X/Y/Select/L/Start 八档位序（BIT 指令链），旧转录 `(a & 0x10) ? 0x0C : 0x0E` 是两档残渣——凡看到"某位二选一"而 ROM 是 BIT 链的，必须完整转录位序；
+- **JSL 替换点的"覆盖范围"要核对原版指令**：CHS 把 85:840C 的原版 STA（按钮字母 tile 写）替换为 4 字节 JSL——C 转录若同时保留原版写与钩子调用，等于把被替换的指令"复活"（mine 多写 0x332A）。对照原版转录（git show main:src/sm_85.c）能直接发现；
+- **VMADDL 追踪（snes_write 0x2116 断点）**：一帧内全部 DMA 目标序列直接可比（theirs 13 个写 vs mine 13 个写逐一对照），能立刻锁定"目标值错"（8615 的 FFFF）而非"没执行"；
+- **表越界读 FFFF 的典型特征**：mine 的 DMA 目标/数据出现 0xFFFF 且 prev 有数据——优先怀疑索引计算越界（E6A3CD 前 8 项就是 FF 占位），而不是 DMA 没执行。
+
 ---
 
-## 13. 变更文件清单
+## 14. 变更文件清单
 
 | 文件 | 改动 |
 |---|---|
@@ -418,7 +468,7 @@ sramOff = ramOff - 51 - 8192
 | `src/sm_93.c` | DrawBombAndProjectileExplosions：接回 CalcExplosion_Mode7 返回值（Bug 4）；DrawPlayerExplosions2：`v3 = r18 = pt.y`（Bug 7） |
 | `src/sm_cpu_infra.c` | stub 重定位 F8B6 + 消息框补丁重对齐 + E3 内部补丁（Bug 5b/6） |
 | `src/sm_rtl.c` | LoadSnesState 重定向常量 F8BD（Bug 5b）；栈返回平移垫片移除（25f1136） |
-| `src/sm_85.c` | 消息框六处转录副作用镜像（Bug 6）；MsgBox_CHS_8774 拷贝 0x180 字节 + MsgBox_CHS_853A 五段 DMA + SetupPpuForActiveMessageBox `$34` 回写（Bug 8） |
-| `saves/` | 旧 stub 时代 15 份 bug-*.sav 作废删除（25f1136）；新快照 bug-1786784933/1786796724/1786850061/1786850077/1786866299/1786870014.sav 保留 |
+| `src/sm_85.c` | 消息框六处转录副作用镜像（Bug 6）；MsgBox_CHS_8774 拷贝 0x180 字节 + MsgBox_CHS_853A 五段 DMA + SetupPpuForActiveMessageBox `$34` 回写（Bug 8）；MsgBox_CHS_87DA 的 y=v1 + MsgBox_CHS_8615 的 x=(mi-1)*8 + DrawSpecialButton 删除原版按钮 tile 写（Bug 10） |
+| `saves/` | 旧 stub 时代 15 份 bug-*.sav 作废删除（25f1136）；新快照 bug-1786784933/1786796724/1786850061/1786850077/1786866299/1786870014/1786874239.sav 保留 |
 
 全部调试插桩（sm_rtl.c、sm_81.c、sm_90.c、sm_94.c、sm_8b.c、sm_93.c 的临时打印）已移除，工作树与 HEAD 一致。
