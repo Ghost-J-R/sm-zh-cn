@@ -1,6 +1,6 @@
-# 统一验证记录：交互游玩暴露的七处 CHS 移植缺陷与修复
+# 统一验证记录：交互游玩暴露的八处 CHS 移植缺陷与修复
 
-> 提交：`185df46`（Bug 1-3）、`fa5ad00`（Bug 4）、`4e8603a`+`25f1136`（Bug 5-6）、`989583f`（消息框崩溃）、`8f4d709`（Bug 7）
+> 提交：`185df46`（Bug 1-3）、`fa5ad00`（Bug 4）、`4e8603a`+`25f1136`（Bug 5-6）、`989583f`（消息框崩溃）、`8f4d709`（Bug 7）、`02d6c5b`（Bug 8）
 > 验证日期：2026-08-15 ～ 2026-08-16
 > 结论：标题 → 存档选择 → 选项菜单 → 开场文字 → Ceres 飞船/逃生 → Zebes → 暂停地图 → 变形球消息框 → 撤离开火，各场景经快照复现或实测验证，最终回归 **零失配**。
 >
@@ -232,6 +232,50 @@ r20 = pt.x;
 
 ---
 
+## 8. Bug 8：拿变形球后道具提示框——中文消息框三处移植错误
+
+### 现象
+
+- 帧 77056（用户拿到变形球、拾取动画完成、道具提示框弹出的瞬间）起失配，持续约 12 秒至帧 77802（提示框关闭恢复），共 747 帧；
+- 首帧：RAM `7E:3387-7E34B5` 175+ 字节（mine 全 FF/00、theirs 为中文框 tilemap 数据）+ VRAM `0x0000-0x000D`（BG1 tilemap 头部 14 字，mine=284E、theirs=CE31/FFD9/…）+ VRAM `0x4300-0x4311`（mine=球形图案 0000/4200/2400/1800、theirs=F6FF/EEFF/…）失配；
+- 快照 bug-1786866299.sav（帧 77055 帧前 theirs 状态）：`game_state=8`、`area=1`（Brinstar）、`samus_pose=0x30`（FaceL_Turn_Jump）、`collected/equipped=0000`（拾取尚未置位）、`message_box_index(0x1C1F)=0`、`coroutine_state_3(0x614)=0`。
+
+### 检查方式
+
+1. 快照解析：`ramOff=156693`，锚点验证（`0x33EA=0x3604`=diag prev 值、`0x3402=0xF3BF`）确认偏移正确；
+2. AUTOLOAD 复现：快照 → `saves/save0.sav` + sm_rtl.c 帧 200 `RtlSaveLoad(2,0)`，加载后第一帧即逐字节重现帧 77056 失配；
+3. theirs 侧写断点（cpu.c `cpu_write` / snes.c `snes_write` 分层打桩）：
+   - 帧 200 theirs 写 `7E:33EA/33EB`（pc=85:816F/8175 = InitializePpuForMessageBoxes）+ `7E:3380-3386`（pc=85:836B-838F = SetupMessageBoxBg3YscrollHdma 行表）——**消息框打开流程启动**；
+   - 帧 200 theirs 的 DMA 序列（bank 85，DBR 寻址全部有效）：VMADDL=0x59A0（SetupPpuForActiveMessageBox tilemap DMA，A1T1=7E3200、DAS1=0x180）→ VMADDL=**0x5980**（880D 边框 DMA，A1T1=E6A5F7、DAS1=0x40）→ VMADDL=0x42C0（853A 段1）；
+   - **theirs 帧 200 无任何 bank E3 的 IO 写**——880D/853A 用 DBR（bank 85）寻址绝对地址，IO 全部有效；
+4. mine 侧入口打印（[DMB]/[M8774]）：帧 200 mine 执行 `DisplayMessageBox_Async(a=9)`、`MsgBox_CHS_8774`（src=E5A580 数据正确）；
+5. 反汇编 CHS ROM `$E3:853A`（5 段 DMA 参数）、`$E3:8774`（拷贝循环 `CPX #$0180`）、`$85:831E`（`ADC $34 / STA $34` 回写）逐条与 C 移植对照。
+
+### 根因（三处，同属"中文消息框图形上传"路径）
+
+1. **MsgBox_CHS_8774 拷贝大小错**：ROM 循环 `LDX #$0000 / LDA [$CC] / STA $7E3200,X / INC $CC / INC $CC / INX / INX / CPX #$0180 / BNE`——X 步进 2 从 0 到 0x17E，**0xC0 次 16 位写 = 0x180 字节**（$7E3200-$7E337F）；`CPX #$0180` 是字节计数而非字计数。旧移植 `memcpy(..., 0x300)` 多拷 0x180 字节，覆盖 $7E3380-$7E34FF（消息框 HDMA 行表/数据区与 Ram3000 后续字段）；
+2. **MsgBox_CHS_853A 段数错**：ROM 实为 5 段 DMA——`+0x80/0x60/VRAM 42C0`、`+0x100/0xD0/4300`、`+0x200/0x60/4380`、`+0x280/0x80/43C0`、`E6A307 表源(16+8 位拼 A1T1L/H)/0x190/4580`；旧移植把段 2-4 错位（漏写 VRAM 0x4300 的 0xD0 字节段），且段 5 漏 `A1T1H=E6A308[X]`；
+3. **SetupPpuForActiveMessageBox 漏 `$34` 回写**：ROM `$85:831E` 为 `JSR $8363 / JSR $8136 / REP #$20 / LDA #$5800 / CLC / ADC $34 / STA $34 / STA $2116 / ...`——`$34` 是"VMADDL 基址"DP 变量（调用方传入 416），+0x5800 后**回写 `$34`**；`$E3:880D` 的边框 DMA 目标 = `LDA $34 / SBC #$0020`，依赖该回写。C 移植漏写 `$34`，mine 的 880D 用旧值 0x000E → VMADDL=0xFFEE 环绕 → **把 E6A5F7 边框数据（0x284E）写进 VRAM 0x0000-0x002D**（BG1 tilemap 头部被污染）。
+
+### 为什么原版/sm-main 没有这个 bug
+
+与 Bug 7 不同——**该路径是汉化专属代码**：`MsgBox_CHS_8527/853A/8615/8774/880D/8707` 全部位于 CHS 扩展 bank E3（原版 ROM 无此 bank），`$85:831E` 的 `ADC $34/STA $34` 与原版 `$85:831E` 也不同（原版无该回写）。sm-main 无此代码路径，原版 ROM 无此功能；三处错误全部是 **cn 移植者转录汉化 ROM 时引入的 C 移植错误**（theirs 模拟器忠实执行 ROM 恒为正确侧）。
+
+### 修复
+
+`src/sm_85.c`（提交 `02d6c5b`）：
+
+1. `MsgBox_CHS_8774`：`memcpy(g_ram + 0x3200, ..., 0x300)` → `0x180` + 注释（CPX #$0180 字节计数）；
+2. `MsgBox_CHS_853A`：重写为 5 段 DMA（补 0x4300 段），段 5 补 `WriteReg(A1T1H, b2[1])`；
+3. `SetupPpuForActiveMessageBox`：补 `*(uint16 *)&g_ram[0x34] = r52;`（ROM `STA $34` 回写）。
+
+### 验证
+
+- AUTOLOAD bug-1786866299.sav 帧 200 逐阶段验证：修 8774 → RAM 失配全消（剩 VRAM）；修 853A → VRAM 0x4300 消（剩 0x0000+0x5983）；修 `$34` 回写 → **帧 200 零失配**（sm-diag.txt 0 字节、Verify failure 0 次、消息框动画帧 213 正常推进）；
+- 全部临时插桩（cpu.c/snes.c/sm_rtl.c/sm_85.c 共 5 处）已移除，git diff 仅剩 sm_85.c 三处修复。
+
+---
+
 ## 9. 验证方式与结果
 
 | 验证项 | 方法 | 结果 |
@@ -242,6 +286,7 @@ r20 = pt.x;
 | Bug 5 修复 | bug-1786796724.sav AUTOLOAD 加载标记确认 + 60 秒存活 + 纯启动回归 | 零失配零崩溃、diag 0 字节 |
 | Bug 6 修复 | 14 秒启动冒烟 + 8 个补丁地址常量二进制校验 | 进程存活、diag 0 字节、常量全部命中 |
 | Bug 7 修复 | bug-1786850061.sav AUTOLOAD 帧 200 双向验证（修复前复现/修复后复测） | 修复前 mine=0xFC vs theirs=0x94；修复后 r18=0x98、零失配 |
+| Bug 8 修复 | bug-1786866299.sav AUTOLOAD 帧 200 逐阶段验证（8774→853A→$34 回写三步递进） | RAM 失配 → VRAM 0x4300 → 全部消除；最终零失配（diag 0 字节） |
 | 启动回归 | 60 秒无人值守 boot（标题 + 开场） | sm-diag.txt 0 字节 |
 | 最终手动回归 | 用户完整流程：标题 → 存档选择 → slot 1 → 选项菜单 → 开场文字 → 飞船场景 → Zebes → 暂停地图 → 变形球消息框 → 撤离开火 | **零失配**（0 字节 diag） |
 
@@ -291,6 +336,14 @@ sramOff = ramOff - 51 - 8192
 - **旋转边界类 bug 的复现**：快照保存的是**帧前 theirs 状态**（失配帧开始前）——AUTOLOAD 加载后第一帧即复现，无需等原帧号；
 - **"原版为什么没有"的验证套路**：先逐字节对比两 ROM 相关 bank（本次 bank 93 实测 0 diff），确认 ROM 侧一致 → 失配只可能来自 C 移植层或触发时机，再据快照分析触发窗口（本次 = ceres_status 置位瞬间 + 槽 1 光束存活，仅 1-2 帧）。
 
+### 6.6 汉化扩展 bank 代码的移植核对要点（Bug 8 沉淀）
+
+- **65816 绝对寻址用 DBR 不用 K**：JSL 到扩展 bank E3 后，`STA $2116`/`STA $4312`/`STA $420B` 的 bank 是 **DBR**（Data Bank Register，此处 = 调用方 bank 85），不是 K（程序 bank E3）——**I/O 全部有效**。曾误判"bank E3 的 IO 写被模拟器丢弃"导致方向性错误；分层打桩（cpu.c `cpu_write` → snes.c `snes_write`）与 `adr=85xxxx` 实测序列是最终裁决；
+- **theirs 侧写断点分层**：RAM 写断点打 `cpu_write`（7E/7F 与 bank 0 镜像都要挂），I/O 写断点打 `snes_write`（0x2100-0x437F 范围 + `runningWhichVersion==1` 过滤）——两者覆盖不同路径；
+- **"mine 把缓冲区写成 FF"的判读**：失配值 mine=FF/00 恒值 + theirs 有数据，有两种可能——mine 多写（拷贝超界）或 mine 目标错位（环绕）；用源数据逐字节比对（如 E5A580+0x187 处 = FF FF）可区分；
+- **快照帧号与 AUTOLOAD 帧号的 off-by-one**：`snes_frame_counter++` 在 RunFrame 之后——AUTOLOAD 注入点帧 N 加载后，失配报告帧号 = N（加载后第一帧），theirs 执行时计数器 = N（尚未 ++）；
+- **协程恢复语义**：快照的 `coroutine_state_3`（0x614）决定消息框协程从哪续行；本 bug 中快照 cst3=0 → 双方都从 DisplayMessageBox_Async 头部执行，差异只在函数体内。
+
 ---
 
 ## 11. 变更文件清单
@@ -302,7 +355,7 @@ sramOff = ramOff - 51 - 8192
 | `src/sm_93.c` | DrawBombAndProjectileExplosions：接回 CalcExplosion_Mode7 返回值（Bug 4）；DrawPlayerExplosions2：`v3 = r18 = pt.y`（Bug 7） |
 | `src/sm_cpu_infra.c` | stub 重定位 F8B6 + 消息框补丁重对齐 + E3 内部补丁（Bug 5b/6） |
 | `src/sm_rtl.c` | LoadSnesState 重定向常量 F8BD（Bug 5b）；栈返回平移垫片移除（25f1136） |
-| `src/sm_85.c` | 消息框六处转录副作用镜像（Bug 6） |
-| `saves/` | 旧 stub 时代 15 份 bug-*.sav 作废删除（25f1136）；新快照 bug-1786784933/1786796724/1786850061/1786850077.sav 保留 |
+| `src/sm_85.c` | 消息框六处转录副作用镜像（Bug 6）；MsgBox_CHS_8774 拷贝 0x180 字节 + MsgBox_CHS_853A 五段 DMA + SetupPpuForActiveMessageBox `$34` 回写（Bug 8） |
+| `saves/` | 旧 stub 时代 15 份 bug-*.sav 作废删除（25f1136）；新快照 bug-1786784933/1786796724/1786850061/1786850077/1786866299.sav 保留 |
 
 全部调试插桩（sm_rtl.c、sm_81.c、sm_90.c、sm_94.c、sm_8b.c、sm_93.c 的临时打印）已移除，工作树与 HEAD 一致。
