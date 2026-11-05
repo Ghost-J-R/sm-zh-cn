@@ -1,3 +1,5 @@
+> 这个 fork 是对超级银河战士 agugu 汉化 ROM 的适配。本项目没有 ROM 文件，你需要自己准备汉化后的 ROM；目前没有适配繁体中文。
+
 # sm
 
 Our discord server is: https://discord.gg/AJJbJAzNNJ
