@@ -61,10 +61,11 @@ ROM 加载层**无需改动**：`src/snes/snes_other.c:78-95` 会把 ROM 扩展�
 - **M3 CHT 验证**：核对 bank 81(4B)/8B(2B) 差异，CHT ROM 全量回归
 - **M4 双版发布**：release 构建 + 使用说明
 
-## 6. git 使用约定
+## 6. git 使用说明
 
-- `upstream` = https://github.com/snesrev/sm.git（fork 基准：`main` = 578f90b，2023-04-17；`upstream/devel` 已拉取参考，比 main 多 2 个提交：c1a840d "Massive code cleanup"、dd215a3 "Cleanup"）
-- 工作分支 `cn`；移植提交逐 bank 进行，信息标注 bank 与区间
-- 仓库级身份为占位（`smre-cn <smre-cn@local>`），推送前请改：`git config user.name/user.email`
+- `upstream` = https://github.com/snesrev/sm.git（基准：`main` = 578f90b，2023-04-17）
+- `fork` = https://github.com/Ghost-J-R/sm-zh-cn.git（汉化 fork，`main` 已同步到本工程最新提交）
+- 工作分支：`main`（早期文档里写的 `cn` 已废弃）
+- 仓库级身份仍是占位（`smre-cn <smre-cn@local>`），如需署名：`git config user.name/user.email`
 - ROM（sm.smc / sm_*.sfc / *.srm）、工具链（third_party/tcc、SDL2-2.24.1）、构建产物（sm.exe、SDL2.dll）全部 git-ignored，**不进入版本库**（ROM 为版权物）
-- 安全说明：本仓库 config 含 `http.sslVerify=false` 与 `http.sslBackend=openssl`——本机 Windows schannel 无可用凭据且 openssl 全链路校验在此环境失败（TLS unexpected eof），为可联网 git 操作所需；若迁移到正常网络环境，建议恢复 `git config http.sslVerify true`
+- 本仓库 config 含 `http.sslVerify=false` 与 `http.sslBackend=openssl`。注意：这**不是**因为本机 schannel 真的不可用——2026-11 复查发现，早先记录的「安全包中没有可用的凭证」「TLS unexpected eof」只在**受限权限的命令行沙箱**里出现；正常用户环境下 schannel 与 openssl 都能正常联网。迁移到网络正常的机器时可改回 `git config http.sslVerify true`。
